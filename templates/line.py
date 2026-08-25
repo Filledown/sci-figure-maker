@@ -47,7 +47,7 @@ def render_line(
         )
 
     if title:
-        ax.set_title(title, loc="left", fontweight="semibold")
+        ax.set_title(title, loc="left", fontweight="bold")
     ax.set_xlabel(xlabel or x)
     if ylabel:
         ax.set_ylabel(ylabel)

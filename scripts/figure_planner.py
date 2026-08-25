@@ -235,10 +235,199 @@ def find_training_columns(
 
     return result
 
+# ------------------------------------------------------------
+# Training figure expansion
+# ------------------------------------------------------------
 
-# ------------------------------------------------------------
-# Per-figure parameter planner
-# ------------------------------------------------------------
+def pretty_metric_label(
+    column: str,
+) -> str:
+    """
+    Convert common raw column names into
+    cleaner publication labels.
+    """
+
+    normalized = (
+        str(column)
+        .strip()
+        .lower()
+    )
+
+    labels = {
+        "train_loss": "Train loss",
+        "training_loss": "Train loss",
+        "val_loss": "Validation loss",
+        "validation_loss": "Validation loss",
+        "map50": "mAP@0.5",
+        "map50_95": "mAP@0.5:0.95",
+        "precision": "Precision",
+        "recall": "Recall",
+        "accuracy": "Accuracy",
+        "acc": "Accuracy",
+        "f1": "F1",
+        "f1_score": "F1",
+        "auc": "AUC",
+        "iou": "IoU",
+        "miou": "mIoU",
+        "dice": "Dice",
+    }
+
+    return labels.get(
+        normalized,
+        str(column).replace(
+            "_",
+            " ",
+        ),
+    )
+
+
+def plan_training_variants(
+    data: pd.DataFrame,
+    inspection: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """
+    Split training data into scientifically
+    compatible line figures.
+
+    Loss metrics and performance metrics should
+    not normally share one y-axis because their
+    scales and meanings are different.
+    """
+
+    epoch = role_column(
+        inspection,
+        "epoch",
+    )
+
+    if not epoch:
+        return []
+
+    loss_columns = []
+    performance_columns = []
+
+    performance_tokens = (
+        "map",
+        "accuracy",
+        "acc",
+        "precision",
+        "recall",
+        "f1",
+        "auc",
+        "iou",
+        "miou",
+        "dice",
+    )
+
+    for column in data.columns:
+
+        if column == epoch:
+            continue
+
+        if not pd.api.types.is_numeric_dtype(
+            data[column]
+        ):
+            continue
+
+        normalized = (
+            str(column)
+            .strip()
+            .lower()
+        )
+
+        if "loss" in normalized:
+
+            loss_columns.append(
+                column
+            )
+
+            continue
+
+        if any(
+            token in normalized
+            for token
+            in performance_tokens
+        ):
+
+            performance_columns.append(
+                column
+            )
+
+    variants = []
+
+
+    if loss_columns:
+
+        variants.append(
+            {
+                "figure": (
+                    "training_loss_curve"
+                ),
+                "title": (
+                    "Training Loss Curves"
+                ),
+                "parameters": {
+                    "x": epoch,
+                    "ys": (
+                        loss_columns[:4]
+                    ),
+                    "labels": [
+                        pretty_metric_label(
+                            column
+                        )
+                        for column
+                        in loss_columns[:4]
+                    ],
+                    "title": (
+                        "Training Loss Curves"
+                    ),
+                    "xlabel": "Epoch",
+                    "ylabel": "Loss",
+                },
+            }
+        )
+
+    # --------------------------------------------------------
+    # Performance curves
+    # --------------------------------------------------------
+
+    if performance_columns:
+
+        variants.append(
+            {
+                "figure": (
+                    "training_metric_curve"
+                ),
+                "title": (
+                    "Training Metric Curves"
+                ),
+                "parameters": {
+                    "x": epoch,
+                    "ys": (
+                        performance_columns[
+                            :6
+                        ]
+                    ),
+                    "labels": [
+                        pretty_metric_label(
+                            column
+                        )
+                        for column
+                        in performance_columns[
+                            :6
+                        ]
+                    ],
+                    "title": (
+                        "Training Metric Curves"
+                    ),
+                    "xlabel": "Epoch",
+                    "ylabel": (
+                        "Metric value"
+                    ),
+                },
+            }
+        )
+
+    return variants
 
 def plan_parameters(
     figure_id: str,
@@ -532,6 +721,65 @@ def build_figure_plan(
         figure_id = recommendation[
             "figure"
         ]
+                # ----------------------------------------------------
+        # Training recommendation can expand into
+        # multiple scientifically compatible figures.
+        # ----------------------------------------------------
+
+        if figure_id == "training_curve":
+
+            training_variants = (
+                plan_training_variants(
+                    data,
+                    inspection,
+                )
+            )
+
+            if not training_variants:
+
+                skipped.append(
+                    {
+                        "figure": figure_id,
+                        "reason": (
+                            "No suitable training "
+                            "curve variables could "
+                            "be resolved."
+                        ),
+                    }
+                )
+
+                continue
+
+            for variant in training_variants:
+
+                plans.append(
+                    {
+                        "figure": variant[
+                            "figure"
+                        ],
+                        "title": variant[
+                            "title"
+                        ],
+                        "priority": recommendation[
+                            "priority"
+                        ],
+                        "reason": recommendation[
+                            "reason"
+                        ],
+                        "template": "line",
+                        "parameters": variant[
+                            "parameters"
+                        ],
+                    }
+                )
+
+                if len(plans) >= top:
+                    break
+
+            if len(plans) >= top:
+                break
+
+            continue
 
         template = (
             SEMANTIC_TO_TEMPLATE.get(

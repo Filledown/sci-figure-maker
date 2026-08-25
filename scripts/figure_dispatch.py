@@ -7,25 +7,15 @@ from typing import Any
 
 import pandas as pd
 
-from scripts.figure_planner import (
-    build_figure_plan,
-)
-from scripts.inspect_data import (
-    inspect_data,
-)
-from scripts.load_data import (
-    load_data,
-)
-from scripts.select_plot import (
-    build_selection_report,
-)
-from scripts.template_registry import (
-    TEMPLATE_REGISTRY,
-)
+from scripts.figure_planner import build_figure_plan
+from scripts.inspect_data import inspect_data
+from scripts.load_data import load_data
+from scripts.select_plot import build_selection_report
+from scripts.template_registry import TEMPLATE_REGISTRY
 
 
 # ------------------------------------------------------------
-# Template preparation helpers
+# Line-data preparation
 # ------------------------------------------------------------
 
 def prepare_line_data(
@@ -42,26 +32,44 @@ def prepare_line_data(
     ys = parameters.get("ys")
     group = parameters.get("group")
 
-    # Standard multi-column training curve:
+    # --------------------------------------------------------
+    # Wide-form multi-line data
     #
-    # Epoch | train_loss | val_loss | mAP...
+    # Example:
+    #
+    # Epoch | train_loss | val_loss
+    # --------------------------------------------------------
+
     if ys:
 
         return {
             "data": data,
             "x": x,
             "ys": ys,
-            "title": parameters.get("title"),
-            "xlabel": parameters.get("xlabel"),
-            "ylabel": parameters.get("ylabel"),
+            "labels": parameters.get(
+                "labels"
+            ),
+            "title": parameters.get(
+                "title"
+            ),
+            "xlabel": parameters.get(
+                "xlabel"
+            ),
+            "ylabel": parameters.get(
+                "ylabel"
+            ),
         }
 
-    # Long-form grouped curve:
+    # --------------------------------------------------------
+    # Long-form grouped curve
+    #
+    # Example:
     #
     # Model | Recall | Precision
     #
-    # needs to be converted into wide format so that
-    # each model becomes one line.
+    # Each model should become one line.
+    # --------------------------------------------------------
+
     if (
         group
         and x
@@ -69,7 +77,11 @@ def prepare_line_data(
     ):
 
         working = data[
-            [group, x, y]
+            [
+                group,
+                x,
+                y,
+            ]
         ].copy()
 
         working = working.dropna(
@@ -106,14 +118,21 @@ def prepare_line_data(
                 for column
                 in curve_columns
             ],
-            "title": parameters.get("title"),
-            "xlabel": parameters.get("xlabel"),
-            "ylabel": parameters.get("ylabel"),
+            "title": parameters.get(
+                "title"
+            ),
+            "xlabel": parameters.get(
+                "xlabel"
+            ),
+            "ylabel": parameters.get(
+                "ylabel"
+            ),
         }
 
-    # Single curve:
-    #
-    # Recall | Precision
+    # --------------------------------------------------------
+    # Single curve
+    # --------------------------------------------------------
+
     if (
         x
         and y
@@ -123,15 +142,28 @@ def prepare_line_data(
             "data": data,
             "x": x,
             "ys": [y],
-            "title": parameters.get("title"),
-            "xlabel": parameters.get("xlabel"),
-            "ylabel": parameters.get("ylabel"),
+            "labels": parameters.get(
+                "labels"
+            ),
+            "title": parameters.get(
+                "title"
+            ),
+            "xlabel": parameters.get(
+                "xlabel"
+            ),
+            "ylabel": parameters.get(
+                "ylabel"
+            ),
         }
 
     raise ValueError(
         "Unable to prepare line-plot data."
     )
 
+
+# ------------------------------------------------------------
+# Heatmap-data preparation
+# ------------------------------------------------------------
 
 def prepare_heatmap_data(
     data: pd.DataFrame,
@@ -144,7 +176,7 @@ def prepare_heatmap_data(
 
     into wide-form:
 
-    Model | Smoke | Blur | ...
+    Model | Smoke | Blur | Occlusion | ...
     """
 
     row = parameters.get("row")
@@ -175,8 +207,7 @@ def prepare_heatmap_data(
 
     value_columns = [
         current
-        for current
-        in wide.columns
+        for current in wide.columns
         if current != row
     ]
 
@@ -235,9 +266,9 @@ def dispatch_figure(
             parameters,
         )
 
-        kwargs["output_dir"] = (
-            output_dir
-        )
+        kwargs[
+            "output_dir"
+        ] = output_dir
 
         return renderer(
             **kwargs
@@ -277,8 +308,12 @@ def dispatch_figure(
 
         return renderer(
             data=data,
-            x=parameters["x"],
-            y=parameters["y"],
+            x=parameters[
+                "x"
+            ],
+            y=parameters[
+                "y"
+            ],
             label=parameters.get(
                 "label"
             ),
@@ -491,7 +526,9 @@ def dispatch_plan(
     data: pd.DataFrame,
     plan_report: dict[str, Any],
     *,
-    output_root: str | Path = "outputs/generated",
+    output_root: str | Path = (
+        "outputs/generated"
+    ),
 ) -> dict[str, Any]:
 
     output_root = Path(
@@ -504,7 +541,7 @@ def dispatch_plan(
     for index, plan in enumerate(
         plan_report.get(
             "plans",
-            []
+            [],
         ),
         start=1,
     ):
@@ -537,7 +574,9 @@ def dispatch_plan(
                     "template": plan[
                         "template"
                     ],
-                    "error": str(exc),
+                    "error": str(
+                        exc
+                    ),
                 }
             )
 
@@ -570,7 +609,7 @@ def dispatch_plan(
 
 
 # ------------------------------------------------------------
-# Console output
+# Console report
 # ------------------------------------------------------------
 
 def print_dispatch_report(
@@ -637,7 +676,9 @@ def print_dispatch_report(
 
         print()
 
-        print("Failed figures:")
+        print(
+            "Failed figures:"
+        )
 
         for item in report[
             "failed"
@@ -650,7 +691,7 @@ def print_dispatch_report(
 
 
 # ------------------------------------------------------------
-# CLI
+# CLI helpers
 # ------------------------------------------------------------
 
 def parse_sheet(
@@ -658,9 +699,13 @@ def parse_sheet(
 ) -> str | int:
 
     try:
-        return int(value)
+
+        return int(
+            value
+        )
 
     except ValueError:
+
         return value
 
 
@@ -697,7 +742,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument(
         "--output-dir",
-        default="outputs/generated",
+        default=(
+            "outputs/generated"
+        ),
     )
 
     parser.add_argument(
@@ -710,6 +757,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     return parser
 
+
+# ------------------------------------------------------------
+# Main
+# ------------------------------------------------------------
 
 def main() -> None:
 
@@ -733,8 +784,10 @@ def main() -> None:
         source=input_path,
     )
 
-    selection = build_selection_report(
-        inspection
+    selection = (
+        build_selection_report(
+            inspection
+        )
     )
 
     plan = build_figure_plan(
