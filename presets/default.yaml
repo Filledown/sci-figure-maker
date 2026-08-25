@@ -1,0 +1,136 @@
+version: "1.0"
+
+name: default
+description: >
+  Default publication-oriented visual settings for sci-figure-maker.
+
+figure:
+
+  width_presets:
+    single_column:
+      width_in: 3.45
+
+    double_column:
+      width_in: 7.15
+
+    wide:
+      width_in: 7.50
+
+  default_width: double_column
+
+  aspect_ratios:
+    standard: 0.68
+    square: 1.0
+    wide: 0.55
+
+typography:
+
+  font_family:
+    - Arial
+    - DejaVu Sans
+
+  font_sizes:
+    panel_label: 11
+    title: 10
+    axis_label: 9
+    tick_label: 8
+    legend: 8
+    annotation: 8
+
+  font_weight:
+    panel_label: bold
+    title: normal
+    axis_label: normal
+    tick_label: normal
+
+axes:
+
+  spine_width: 0.8
+  tick_width: 0.8
+  tick_length: 3.0
+
+  show_top_spine: false
+  show_right_spine: false
+
+  grid:
+    enabled: false
+    alpha: 0.20
+    linewidth: 0.5
+
+lines:
+
+  default_width: 1.5
+  emphasized_width: 2.0
+  auxiliary_width: 1.0
+
+markers:
+
+  default_size: 5
+  emphasized_size: 6
+  edge_width: 0.7
+
+scatter:
+
+  alpha: 0.85
+  edge_width: 0.5
+
+error_bars:
+
+  line_width: 1.0
+  cap_size: 3
+
+legend:
+
+  frame_on: false
+  location: best
+
+  prefer_direct_labels: true
+
+  avoid_covering_data: true
+
+panel_labels:
+
+  enabled: true
+  style: uppercase
+  position: upper_left
+  sequence:
+    - A
+    - B
+    - C
+    - D
+    - E
+    - F
+    - G
+    - H
+
+export:
+
+  png:
+    dpi: 600
+    transparent: false
+
+  svg:
+    enabled: true
+
+  pdf:
+    enabled: true
+
+  bbox_inches: tight
+
+  preserve_vector_when_possible: true
+
+scientific_rules:
+
+  avoid_3d_by_default: true
+
+  avoid_rainbow_colormaps: true
+
+  show_units_when_available: true
+
+  preserve_raw_data: true
+
+  disclose_smoothing: true
+
+  avoid_truncated_axes_when_misleading: true
+
+  prefer_vector_output: true

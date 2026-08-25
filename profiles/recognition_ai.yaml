@@ -1,0 +1,310 @@
+version: "1.0"
+
+profile:
+  name: recognition_ai
+
+  description: >
+    Scientific visualization profile for machine learning,
+    deep learning, computer vision, recognition,
+    detection, segmentation, anomaly detection,
+    and related data-driven AI research.
+
+task_families:
+
+  - classification
+  - object_detection
+  - semantic_segmentation
+  - instance_segmentation
+  - anomaly_detection
+  - event_recognition
+  - multimodal_recognition
+  - model_benchmark
+  - ablation_study
+  - robustness_analysis
+  - efficiency_analysis
+  - deployment_analysis
+
+semantic_roles:
+
+  model:
+    aliases:
+      - model
+      - method
+      - network
+      - architecture
+
+  epoch:
+    aliases:
+      - epoch
+      - epochs
+      - iteration
+      - step
+
+  class:
+    aliases:
+      - class
+      - category
+      - label
+
+  scenario:
+    aliases:
+      - scenario
+      - condition
+      - environment
+      - corruption
+      - setting
+
+  variant:
+    aliases:
+      - variant
+      - configuration
+      - ablation
+      - component
+
+metrics:
+
+  accuracy:
+    aliases:
+      - accuracy
+      - acc
+    direction: higher
+    family: quality
+
+  precision:
+    aliases:
+      - precision
+      - p
+    direction: higher
+    family: quality
+
+  recall:
+    aliases:
+      - recall
+      - sensitivity
+      - r
+    direction: higher
+    family: quality
+
+  f1:
+    aliases:
+      - f1
+      - f1_score
+      - f1-score
+    direction: higher
+    family: quality
+
+  ap:
+    aliases:
+      - ap
+      - average_precision
+    direction: higher
+    family: quality
+
+  map50:
+    aliases:
+      - map50
+      - map_50
+      - map@0.5
+      - map@50
+    direction: higher
+    family: quality
+
+  map50_95:
+    aliases:
+      - map50_95
+      - map50-95
+      - map_50_95
+      - map@0.5:0.95
+      - map@50:95
+    direction: higher
+    family: quality
+
+  auc:
+    aliases:
+      - auc
+      - roc_auc
+    direction: higher
+    family: quality
+
+  iou:
+    aliases:
+      - iou
+      - intersection_over_union
+    direction: higher
+    family: quality
+
+  miou:
+    aliases:
+      - miou
+      - mean_iou
+    direction: higher
+    family: quality
+
+  dice:
+    aliases:
+      - dice
+      - dice_score
+    direction: higher
+    family: quality
+
+  fps:
+    aliases:
+      - fps
+      - frames_per_second
+    direction: higher
+    family: efficiency
+
+  latency:
+    aliases:
+      - latency
+      - latency_ms
+      - inference_time
+      - inference_time_ms
+    direction: lower
+    family: efficiency
+
+  params:
+    aliases:
+      - params
+      - parameters
+      - params_m
+      - parameters_m
+    direction: lower
+    family: complexity
+
+  flops:
+    aliases:
+      - flops
+      - gflops
+      - macs
+      - gmacs
+    direction: lower
+    family: complexity
+
+  loss:
+    aliases:
+      - loss
+      - train_loss
+      - val_loss
+      - validation_loss
+    direction: lower
+    family: training
+
+curve_variables:
+
+  confidence:
+    aliases:
+      - confidence
+      - confidence_threshold
+      - conf
+      - threshold
+
+  recall_axis:
+    aliases:
+      - recall
+
+  precision_axis:
+    aliases:
+      - precision
+
+  false_positive_rate:
+    aliases:
+      - fpr
+      - false_positive_rate
+
+  true_positive_rate:
+    aliases:
+      - tpr
+      - true_positive_rate
+
+experiment_types:
+
+  training:
+
+    signals:
+      - epoch
+      - loss
+
+    recommended_figures:
+      - training_curve
+
+  benchmark:
+
+    signals:
+      - model
+      - quality_metric
+
+    recommended_figures:
+      - model_comparison
+      - model_ranking
+
+  accuracy_efficiency:
+
+    signals:
+      - model
+      - quality_metric
+      - efficiency_metric
+
+    recommended_figures:
+      - accuracy_efficiency
+      - pareto
+
+  ablation:
+
+    signals:
+      - variant
+      - quality_metric
+
+    recommended_figures:
+      - ablation
+
+  robustness:
+
+    signals:
+      - model
+      - scenario
+      - quality_metric
+
+    recommended_figures:
+      - robustness_heatmap
+
+  pr_curve:
+
+    required:
+      - precision_series
+      - recall_series
+
+    recommended_figures:
+      - pr_curve
+
+  roc_curve:
+
+    required:
+      - fpr_series
+      - tpr_series
+
+    recommended_figures:
+      - roc_curve
+
+scientific_constraints:
+
+  efficiency_comparison:
+    require_comparable_hardware: true
+    require_comparable_input_size: true
+    require_comparable_batch_size: true
+    require_comparable_precision_mode: true
+
+  pr_curve:
+    prohibit_curve_fabrication_from_summary_metrics: true
+
+  roc_curve:
+    prohibit_curve_fabrication_from_summary_metrics: true
+
+  attention_visualization:
+    require_real_model_output: true
+
+  feature_map_visualization:
+    require_real_model_output: true
+
+  qualitative_prediction:
+    require_real_predictions: true
