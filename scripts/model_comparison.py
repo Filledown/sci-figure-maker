@@ -6,6 +6,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 
+from scripts.load_data import load_data
 from scripts.theme import (
     get_figure_width,
     get_semantic_palette,
@@ -14,36 +15,6 @@ from scripts.theme import (
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
-
-def load_data(path: Path) -> pd.DataFrame:
-    """
-    Load model-comparison data from CSV.
-
-    Required column:
-        Model
-
-    Metric columns should contain numeric values.
-    """
-
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Input file not found: {path}"
-        )
-
-    data = pd.read_csv(path)
-
-    if "Model" not in data.columns:
-        raise ValueError(
-            "Input data must contain a 'Model' column."
-        )
-
-    if data.empty:
-        raise ValueError(
-            "Input data contains no rows."
-        )
-
-    return data
 
 
 def validate_metric(
