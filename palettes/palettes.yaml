@@ -1,0 +1,133 @@
+version: "1.0"
+
+description: >
+  Scientific color palettes for publication-quality figures.
+  Palettes prioritize readability, restrained saturation,
+  model comparison, highlighting, and accessibility.
+
+palettes:
+
+  soft_5:
+    type: categorical
+    description: Soft low-saturation palette for general scientific figures.
+    colors:
+      - "#5B8FF9"
+      - "#61DDAA"
+      - "#65789B"
+      - "#F6BD16"
+      - "#7262FD"
+
+  soft_8:
+    type: categorical
+    description: Extended soft scientific categorical palette.
+    colors:
+      - "#5B8FF9"
+      - "#61DDAA"
+      - "#65789B"
+      - "#F6BD16"
+      - "#7262FD"
+      - "#78D3F8"
+      - "#9661BC"
+      - "#F6903D"
+
+  recognition_models:
+    type: categorical
+    description: Default palette for comparing AI recognition models.
+    colors:
+      - "#6C8EBF"
+      - "#7FAF9A"
+      - "#9B8FB9"
+      - "#C5A46D"
+      - "#76A5AF"
+      - "#A7A7A7"
+      - "#CC7A5A"
+      - "#59788E"
+
+  baseline_vs_ours:
+    type: semantic
+    description: Neutral baselines with a strong highlight for the proposed method.
+    baseline:
+      - "#B8C2CC"
+      - "#91A3B0"
+      - "#738999"
+      - "#AAB2BD"
+    highlight: "#D95F4C"
+
+  blue_green:
+    type: sequential
+    description: Sequential palette for ordered measurements.
+    colors:
+      - "#E8F1F5"
+      - "#C6DEE5"
+      - "#93C5C8"
+      - "#5EA6A3"
+      - "#287F7A"
+      - "#145C58"
+
+  sequential_blue:
+    type: sequential
+    description: Sequential blue palette.
+    colors:
+      - "#EFF5FB"
+      - "#D5E5F2"
+      - "#AFCDE3"
+      - "#7BAFD4"
+      - "#438CC1"
+      - "#1764A0"
+
+  red_blue_diverging:
+    type: diverging
+    description: Diverging palette for negative-neutral-positive values.
+    colors:
+      - "#B64B4B"
+      - "#D98778"
+      - "#EFC6BD"
+      - "#F2F2F2"
+      - "#C5D7E8"
+      - "#82A9CE"
+      - "#426E9C"
+
+  purple_orange_diverging:
+    type: diverging
+    description: Diverging palette for centered scientific data.
+    colors:
+      - "#6F4C9B"
+      - "#9E79B8"
+      - "#C7ABD4"
+      - "#F2F2F2"
+      - "#F3C88C"
+      - "#E99A45"
+      - "#C86920"
+
+  colorblind_safe:
+    type: categorical
+    description: Colorblind-conscious palette for categorical comparison.
+    colors:
+      - "#0072B2"
+      - "#E69F00"
+      - "#009E73"
+      - "#CC79A7"
+      - "#56B4E9"
+      - "#D55E00"
+      - "#F0E442"
+      - "#000000"
+
+  grayscale_safe:
+    type: categorical
+    description: Grayscale palette for print-safe figures.
+    colors:
+      - "#202020"
+      - "#454545"
+      - "#686868"
+      - "#8B8B8B"
+      - "#AEAEAE"
+      - "#D0D0D0"
+
+defaults:
+
+  categorical: recognition_models
+  sequential: sequential_blue
+  diverging: red_blue_diverging
+  model_comparison: recognition_models
+  highlight_model: baseline_vs_ours
+  accessibility: colorblind_safe
