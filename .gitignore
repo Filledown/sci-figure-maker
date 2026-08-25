@@ -1,0 +1,29 @@
+# Python virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# IDE
+.vscode/
+
+# Windows
+Thumbs.db
+
+# Temporary files
+*.log
+*.tmp
+
+# Deep learning outputs
+runs/
+weights/
+checkpoints/
+
+# Model files
+*.pt
+*.pth
+*.ckpt
+
+# Private data
+research_data/
