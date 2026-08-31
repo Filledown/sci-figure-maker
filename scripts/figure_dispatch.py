@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import warnings
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from scripts.figure_planner import build_figure_plan
@@ -15,39 +17,388 @@ from scripts.template_registry import TEMPLATE_REGISTRY
 
 
 # ------------------------------------------------------------
+# Numerical helpers
+# ------------------------------------------------------------
+
+def _clean_xy(
+    data: pd.DataFrame,
+    x: str,
+    y: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Return finite numeric X/Y values.
+
+    The function removes only missing/non-finite points.
+    It never invents or modifies observations.
+    """
+
+    working = data[
+        [
+            x,
+            y,
+        ]
+    ].copy()
+
+    working[x] = pd.to_numeric(
+        working[x],
+        errors="coerce",
+    )
+
+    working[y] = pd.to_numeric(
+        working[y],
+        errors="coerce",
+    )
+
+    working = working.dropna(
+        subset=[
+            x,
+            y,
+        ]
+    )
+
+    x_values = working[x].to_numpy(
+        dtype=float
+    )
+
+    y_values = working[y].to_numpy(
+        dtype=float
+    )
+
+    finite = (
+        np.isfinite(x_values)
+        & np.isfinite(y_values)
+    )
+
+    return (
+        x_values[finite],
+        y_values[finite],
+    )
+
+
+def _trapezoidal_auc(
+    x_values: np.ndarray,
+    y_values: np.ndarray,
+) -> float:
+    """
+    Calculate area under a curve using the trapezoidal rule.
+
+    X values are sorted before integration.
+    Data values themselves are never modified.
+    """
+
+    if len(x_values) < 2:
+
+        raise ValueError(
+            "At least two curve points are "
+            "required to calculate AUC."
+        )
+
+    order = np.argsort(
+        x_values
+    )
+
+    x_sorted = x_values[
+        order
+    ]
+
+    y_sorted = y_values[
+        order
+    ]
+
+    widths = (
+        x_sorted[1:]
+        - x_sorted[:-1]
+    )
+
+    heights = (
+        y_sorted[1:]
+        + y_sorted[:-1]
+    ) * 0.5
+
+    return float(
+        np.sum(
+            widths * heights
+        )
+    )
+
+
+def _validate_roc_range(
+    x_values: np.ndarray,
+    y_values: np.ndarray,
+    *,
+    series_name: str,
+) -> None:
+    """
+    Validate that FPR and TPR lie inside [0, 1].
+    """
+
+    tolerance = 1e-9
+
+    if len(x_values) == 0:
+
+        raise ValueError(
+            f"ROC series '{series_name}' "
+            f"contains no valid points."
+        )
+
+    if (
+        np.min(x_values)
+        < -tolerance
+        or np.max(x_values)
+        > 1.0 + tolerance
+    ):
+
+        raise ValueError(
+            f"ROC series '{series_name}' "
+            f"contains FPR values outside [0, 1]."
+        )
+
+    if (
+        np.min(y_values)
+        < -tolerance
+        or np.max(y_values)
+        > 1.0 + tolerance
+    ):
+
+        raise ValueError(
+            f"ROC series '{series_name}' "
+            f"contains TPR values outside [0, 1]."
+        )
+
+
+def _validate_pr_range(
+    recall_values: np.ndarray,
+    precision_values: np.ndarray,
+    *,
+    series_name: str,
+) -> None:
+    """
+    Validate that Recall and Precision lie inside [0, 1].
+    """
+
+    tolerance = 1e-9
+
+    if len(recall_values) == 0:
+
+        raise ValueError(
+            f"PR series '{series_name}' "
+            f"contains no valid points."
+        )
+
+    if (
+        np.min(recall_values)
+        < -tolerance
+        or np.max(recall_values)
+        > 1.0 + tolerance
+    ):
+
+        raise ValueError(
+            f"PR series '{series_name}' "
+            f"contains Recall values outside [0, 1]."
+        )
+
+    if (
+        np.min(precision_values)
+        < -tolerance
+        or np.max(precision_values)
+        > 1.0 + tolerance
+    ):
+
+        raise ValueError(
+            f"PR series '{series_name}' "
+            f"contains Precision values outside [0, 1]."
+        )
+
+
+def _warn_roc_endpoints(
+    x_values: np.ndarray,
+    y_values: np.ndarray,
+    *,
+    series_name: str,
+) -> None:
+    """
+    Warn when standard ROC endpoints are not present.
+
+    Important:
+    The function NEVER inserts (0, 0) or (1, 1).
+    """
+
+    if len(x_values) == 0:
+
+        return
+
+    start_present = bool(
+        np.any(
+            np.isclose(
+                x_values,
+                0.0,
+            )
+            & np.isclose(
+                y_values,
+                0.0,
+            )
+        )
+    )
+
+    end_present = bool(
+        np.any(
+            np.isclose(
+                x_values,
+                1.0,
+            )
+            & np.isclose(
+                y_values,
+                1.0,
+            )
+        )
+    )
+
+    if not start_present:
+
+        warnings.warn(
+            (
+                f"ROC series '{series_name}' "
+                "does not contain the (0, 0) "
+                "endpoint. The endpoint was NOT "
+                "added automatically."
+            ),
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
+    if not end_present:
+
+        warnings.warn(
+            (
+                f"ROC series '{series_name}' "
+                "does not contain the (1, 1) "
+                "endpoint. The endpoint was NOT "
+                "added automatically."
+            ),
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
+
+def _roc_label(
+    name: str,
+    auc_value: float,
+) -> str:
+    """
+    Format a publication-style ROC legend label.
+    """
+
+    return (
+        f"{name} "
+        f"(AUC = {auc_value:.3f})"
+    )
+
+
+def _pr_label(
+    name: str,
+    auprc_value: float,
+) -> str:
+    """
+    Format a publication-style PR legend label.
+
+    We intentionally use AUPRC instead of AP because
+    trapezoidal integration is not necessarily identical
+    to a framework-reported Average Precision metric.
+    """
+
+    return (
+        f"{name} "
+        f"(AUPRC = {auprc_value:.3f})"
+    )
+
+
+# ------------------------------------------------------------
 # Line-data preparation
 # ------------------------------------------------------------
 
 def prepare_line_data(
     data: pd.DataFrame,
     parameters: dict[str, Any],
+    *,
+    figure_id: str | None = None,
 ) -> dict[str, Any]:
     """
-    Convert a generic curve plan into arguments accepted by
+    Convert curve plans into arguments accepted by
     templates.line.render_line().
+
+    ROC figures receive additional scientific handling:
+
+    - FPR/TPR validation
+    - automatic AUC calculation
+    - chance diagonal
+    - fixed [0, 1] axes
+    - endpoint warnings
+
+    PR figures receive additional scientific handling:
+
+    - Recall/Precision validation
+    - automatic trapezoidal AUPRC calculation
+    - fixed [0, 1] axes
+    - no artificial baseline
     """
 
-    x = parameters.get("x")
-    y = parameters.get("y")
-    ys = parameters.get("ys")
-    group = parameters.get("group")
+    x = parameters.get(
+        "x"
+    )
+
+    y = parameters.get(
+        "y"
+    )
+
+    ys = parameters.get(
+        "ys"
+    )
+
+    group = parameters.get(
+        "group"
+    )
+
+    is_roc = (
+        figure_id
+        == "roc_curve"
+    )
+
+    is_pr = (
+        figure_id
+        == "pr_curve"
+    )
 
     # --------------------------------------------------------
     # Wide-form multi-line data
-    #
-    # Example:
-    #
-    # Epoch | train_loss | val_loss
     # --------------------------------------------------------
 
     if ys:
 
-        return {
+        labels = parameters.get(
+            "labels"
+        )
+
+        if labels is None:
+
+            labels = [
+                str(column)
+                for column
+                in ys
+            ]
+
+        else:
+
+            labels = list(
+                labels
+            )
+
+        result = {
             "data": data,
             "x": x,
             "ys": ys,
-            "labels": parameters.get(
-                "labels"
+            "labels": labels,
+            "highlight": parameters.get(
+                "highlight"
             ),
             "title": parameters.get(
                 "title"
@@ -60,14 +411,190 @@ def prepare_line_data(
             ),
         }
 
+        if is_roc:
+
+            roc_labels = []
+
+            for column, label in zip(
+                ys,
+                labels,
+            ):
+
+                x_values, y_values = (
+                    _clean_xy(
+                        data,
+                        x,
+                        column,
+                    )
+                )
+
+                _validate_roc_range(
+                    x_values,
+                    y_values,
+                    series_name=str(
+                        label
+                    ),
+                )
+
+                _warn_roc_endpoints(
+                    x_values,
+                    y_values,
+                    series_name=str(
+                        label
+                    ),
+                )
+
+                auc_value = (
+                    _trapezoidal_auc(
+                        x_values,
+                        y_values,
+                    )
+                )
+
+                roc_labels.append(
+                    _roc_label(
+                        str(label),
+                        auc_value,
+                    )
+                )
+
+            result[
+                "labels"
+            ] = roc_labels
+
+            result[
+                "xlabel"
+            ] = (
+                parameters.get(
+                    "xlabel"
+                )
+                or "False Positive Rate"
+            )
+
+            result[
+                "ylabel"
+            ] = (
+                parameters.get(
+                    "ylabel"
+                )
+                or "True Positive Rate"
+            )
+
+            result[
+                "xlim"
+            ] = (
+                0.0,
+                1.0,
+            )
+
+            result[
+                "ylim"
+            ] = (
+                0.0,
+                1.0,
+            )
+
+            result[
+                "reference_diagonal"
+            ] = True
+
+            result[
+                "sort_x"
+            ] = True
+
+        if is_pr:
+
+            pr_labels = []
+
+            for column, label in zip(
+                ys,
+                labels,
+            ):
+
+                recall_values, precision_values = (
+                    _clean_xy(
+                        data,
+                        x,
+                        column,
+                    )
+                )
+
+                _validate_pr_range(
+                    recall_values,
+                    precision_values,
+                    series_name=str(
+                        label
+                    ),
+                )
+
+                auprc_value = (
+                    _trapezoidal_auc(
+                        recall_values,
+                        precision_values,
+                    )
+                )
+
+                pr_labels.append(
+                    _pr_label(
+                        str(label),
+                        auprc_value,
+                    )
+                )
+
+            result[
+                "labels"
+            ] = pr_labels
+
+            result[
+                "xlabel"
+            ] = (
+                parameters.get(
+                    "xlabel"
+                )
+                or "Recall"
+            )
+
+            result[
+                "ylabel"
+            ] = (
+                parameters.get(
+                    "ylabel"
+                )
+                or "Precision"
+            )
+
+            result[
+                "xlim"
+            ] = (
+                0.0,
+                1.0,
+            )
+
+            result[
+                "ylim"
+            ] = (
+                0.0,
+                1.0,
+            )
+
+            result[
+                "reference_diagonal"
+            ] = False
+
+            result[
+                "sort_x"
+            ] = True
+
+        return result
+
     # --------------------------------------------------------
     # Long-form grouped curve
     #
-    # Example:
+    # Example ROC:
+    # Model | FPR | TPR
     #
+    # Example PR:
     # Model | Recall | Precision
-    #
-    # Each model should become one line.
     # --------------------------------------------------------
 
     if (
@@ -92,6 +619,36 @@ def prepare_line_data(
             ]
         )
 
+        working[x] = pd.to_numeric(
+            working[x],
+            errors="coerce",
+        )
+
+        working[y] = pd.to_numeric(
+            working[y],
+            errors="coerce",
+        )
+
+        working = working.dropna(
+            subset=[
+                x,
+                y,
+            ]
+        )
+
+        if is_roc or is_pr:
+
+            working = (
+                working
+                .sort_values(
+                    by=[
+                        group,
+                        x,
+                    ],
+                    kind="stable",
+                )
+            )
+
         wide = (
             working
             .pivot_table(
@@ -109,15 +666,20 @@ def prepare_line_data(
             if column != x
         ]
 
-        return {
+        labels = [
+            str(column)
+            for column
+            in curve_columns
+        ]
+
+        result = {
             "data": wide,
             "x": x,
             "ys": curve_columns,
-            "labels": [
-                str(column)
-                for column
-                in curve_columns
-            ],
+            "labels": labels,
+            "highlight": parameters.get(
+                "highlight"
+            ),
             "title": parameters.get(
                 "title"
             ),
@@ -128,6 +690,242 @@ def prepare_line_data(
                 "ylabel"
             ),
         }
+
+        if is_roc:
+
+            auc_lookup: dict[
+                str,
+                float,
+            ] = {}
+
+            for group_value, subset in (
+                working.groupby(
+                    group,
+                    sort=False,
+                )
+            ):
+
+                x_values, y_values = (
+                    _clean_xy(
+                        subset,
+                        x,
+                        y,
+                    )
+                )
+
+                series_name = str(
+                    group_value
+                )
+
+                _validate_roc_range(
+                    x_values,
+                    y_values,
+                    series_name=series_name,
+                )
+
+                _warn_roc_endpoints(
+                    x_values,
+                    y_values,
+                    series_name=series_name,
+                )
+
+                auc_lookup[
+                    series_name
+                ] = (
+                    _trapezoidal_auc(
+                        x_values,
+                        y_values,
+                    )
+                )
+
+            roc_labels = []
+
+            for column in curve_columns:
+
+                series_name = str(
+                    column
+                )
+
+                auc_value = (
+                    auc_lookup.get(
+                        series_name
+                    )
+                )
+
+                if auc_value is None:
+
+                    roc_labels.append(
+                        series_name
+                    )
+
+                else:
+
+                    roc_labels.append(
+                        _roc_label(
+                            series_name,
+                            auc_value,
+                        )
+                    )
+
+            result[
+                "labels"
+            ] = roc_labels
+
+            result[
+                "xlabel"
+            ] = (
+                parameters.get(
+                    "xlabel"
+                )
+                or "False Positive Rate"
+            )
+
+            result[
+                "ylabel"
+            ] = (
+                parameters.get(
+                    "ylabel"
+                )
+                or "True Positive Rate"
+            )
+
+            result[
+                "xlim"
+            ] = (
+                0.0,
+                1.0,
+            )
+
+            result[
+                "ylim"
+            ] = (
+                0.0,
+                1.0,
+            )
+
+            result[
+                "reference_diagonal"
+            ] = True
+
+            result[
+                "sort_x"
+            ] = True
+
+        if is_pr:
+
+            auprc_lookup: dict[
+                str,
+                float,
+            ] = {}
+
+            for group_value, subset in (
+                working.groupby(
+                    group,
+                    sort=False,
+                )
+            ):
+
+                recall_values, precision_values = (
+                    _clean_xy(
+                        subset,
+                        x,
+                        y,
+                    )
+                )
+
+                series_name = str(
+                    group_value
+                )
+
+                _validate_pr_range(
+                    recall_values,
+                    precision_values,
+                    series_name=series_name,
+                )
+
+                auprc_lookup[
+                    series_name
+                ] = (
+                    _trapezoidal_auc(
+                        recall_values,
+                        precision_values,
+                    )
+                )
+
+            pr_labels = []
+
+            for column in curve_columns:
+
+                series_name = str(
+                    column
+                )
+
+                auprc_value = (
+                    auprc_lookup.get(
+                        series_name
+                    )
+                )
+
+                if auprc_value is None:
+
+                    pr_labels.append(
+                        series_name
+                    )
+
+                else:
+
+                    pr_labels.append(
+                        _pr_label(
+                            series_name,
+                            auprc_value,
+                        )
+                    )
+
+            result[
+                "labels"
+            ] = pr_labels
+
+            result[
+                "xlabel"
+            ] = (
+                parameters.get(
+                    "xlabel"
+                )
+                or "Recall"
+            )
+
+            result[
+                "ylabel"
+            ] = (
+                parameters.get(
+                    "ylabel"
+                )
+                or "Precision"
+            )
+
+            result[
+                "xlim"
+            ] = (
+                0.0,
+                1.0,
+            )
+
+            result[
+                "ylim"
+            ] = (
+                0.0,
+                1.0,
+            )
+
+            result[
+                "reference_diagonal"
+            ] = False
+
+            result[
+                "sort_x"
+            ] = True
+
+        return result
 
     # --------------------------------------------------------
     # Single curve
@@ -138,12 +936,31 @@ def prepare_line_data(
         and y
     ):
 
-        return {
+        labels = parameters.get(
+            "labels"
+        )
+
+        if labels is None:
+
+            labels = [
+                str(y)
+            ]
+
+        else:
+
+            labels = list(
+                labels
+            )
+
+        result = {
             "data": data,
             "x": x,
-            "ys": [y],
-            "labels": parameters.get(
-                "labels"
+            "ys": [
+                y
+            ],
+            "labels": labels,
+            "highlight": parameters.get(
+                "highlight"
             ),
             "title": parameters.get(
                 "title"
@@ -155,6 +972,170 @@ def prepare_line_data(
                 "ylabel"
             ),
         }
+
+        if is_roc:
+
+            x_values, y_values = (
+                _clean_xy(
+                    data,
+                    x,
+                    y,
+                )
+            )
+
+            series_name = (
+                str(labels[0])
+                if labels
+                else str(y)
+            )
+
+            _validate_roc_range(
+                x_values,
+                y_values,
+                series_name=series_name,
+            )
+
+            _warn_roc_endpoints(
+                x_values,
+                y_values,
+                series_name=series_name,
+            )
+
+            auc_value = (
+                _trapezoidal_auc(
+                    x_values,
+                    y_values,
+                )
+            )
+
+            result[
+                "labels"
+            ] = [
+                _roc_label(
+                    series_name,
+                    auc_value,
+                )
+            ]
+
+            result[
+                "xlabel"
+            ] = (
+                parameters.get(
+                    "xlabel"
+                )
+                or "False Positive Rate"
+            )
+
+            result[
+                "ylabel"
+            ] = (
+                parameters.get(
+                    "ylabel"
+                )
+                or "True Positive Rate"
+            )
+
+            result[
+                "xlim"
+            ] = (
+                0.0,
+                1.0,
+            )
+
+            result[
+                "ylim"
+            ] = (
+                0.0,
+                1.0,
+            )
+
+            result[
+                "reference_diagonal"
+            ] = True
+
+            result[
+                "sort_x"
+            ] = True
+
+        if is_pr:
+
+            recall_values, precision_values = (
+                _clean_xy(
+                    data,
+                    x,
+                    y,
+                )
+            )
+
+            series_name = (
+                str(labels[0])
+                if labels
+                else str(y)
+            )
+
+            _validate_pr_range(
+                recall_values,
+                precision_values,
+                series_name=series_name,
+            )
+
+            auprc_value = (
+                _trapezoidal_auc(
+                    recall_values,
+                    precision_values,
+                )
+            )
+
+            result[
+                "labels"
+            ] = [
+                _pr_label(
+                    series_name,
+                    auprc_value,
+                )
+            ]
+
+            result[
+                "xlabel"
+            ] = (
+                parameters.get(
+                    "xlabel"
+                )
+                or "Recall"
+            )
+
+            result[
+                "ylabel"
+            ] = (
+                parameters.get(
+                    "ylabel"
+                )
+                or "Precision"
+            )
+
+            result[
+                "xlim"
+            ] = (
+                0.0,
+                1.0,
+            )
+
+            result[
+                "ylim"
+            ] = (
+                0.0,
+                1.0,
+            )
+
+            result[
+                "reference_diagonal"
+            ] = False
+
+            result[
+                "sort_x"
+            ] = True
+
+        return result
 
     raise ValueError(
         "Unable to prepare line-plot data."
@@ -179,9 +1160,17 @@ def prepare_heatmap_data(
     Model | Smoke | Blur | Occlusion | ...
     """
 
-    row = parameters.get("row")
-    column = parameters.get("column")
-    value = parameters.get("value")
+    row = parameters.get(
+        "row"
+    )
+
+    column = parameters.get(
+        "column"
+    )
+
+    value = parameters.get(
+        "value"
+    )
 
     if not (
         row
@@ -207,7 +1196,8 @@ def prepare_heatmap_data(
 
     value_columns = [
         current
-        for current in wide.columns
+        for current
+        in wide.columns
         if current != row
     ]
 
@@ -236,12 +1226,20 @@ def dispatch_figure(
         "template"
     ]
 
+    figure_id = plan[
+        "figure"
+    ]
+
     parameters = dict(
-        plan["parameters"]
+        plan[
+            "parameters"
+        ]
     )
 
-    renderer = TEMPLATE_REGISTRY.get(
-        template_name
+    renderer = (
+        TEMPLATE_REGISTRY.get(
+            template_name
+        )
     )
 
     if renderer is None:
@@ -264,6 +1262,7 @@ def dispatch_figure(
         kwargs = prepare_line_data(
             data,
             parameters,
+            figure_id=figure_id,
         )
 
         kwargs[
@@ -367,9 +1366,11 @@ def dispatch_figure(
 
     if template_name == "heatmap":
 
-        kwargs = prepare_heatmap_data(
-            data,
-            parameters,
+        kwargs = (
+            prepare_heatmap_data(
+                data,
+                parameters,
+            )
         )
 
         kwargs[
@@ -595,7 +1596,9 @@ def dispatch_plan(
                     current_dir
                 ),
                 "files": {
-                    key: str(value)
+                    key: str(
+                        value
+                    )
                     for key, value
                     in paths.items()
                 },
@@ -672,7 +1675,9 @@ def print_dispatch_report(
             "No figures were generated."
         )
 
-    if report["failed"]:
+    if report[
+        "failed"
+    ]:
 
         print()
 
@@ -685,7 +1690,8 @@ def print_dispatch_report(
         ]:
 
             print(
-                f"  - {item['figure']}: "
+                f"  - "
+                f"{item['figure']}: "
                 f"{item['error']}"
             )
 
@@ -775,7 +1781,9 @@ def main() -> None:
     data = load_data(
         input_path,
         sheet_name=parse_sheet(
-            str(args.sheet)
+            str(
+                args.sheet
+            )
         ),
     )
 

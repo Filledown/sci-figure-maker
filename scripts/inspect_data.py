@@ -103,7 +103,6 @@ def identify_semantic_roles(
     )
 
     for role_name, role_config in semantic_roles.items():
-
         aliases = role_config.get(
             "aliases",
             [],
@@ -147,7 +146,6 @@ def identify_metrics(
     )
 
     for metric_name, metric_config in metrics.items():
-
         aliases = metric_config.get(
             "aliases",
             [],
@@ -191,7 +189,6 @@ def identify_curve_variables(
     )
 
     for variable_name, variable_config in variables.items():
-
         aliases = variable_config.get(
             "aliases",
             [],
@@ -241,7 +238,10 @@ def classify_columns(
 
         elif (
             pd.api.types.is_object_dtype(series)
-            or isinstance(series.dtype, pd.CategoricalDtype)
+            or isinstance(
+                series.dtype,
+                pd.CategoricalDtype,
+            )
         ):
             categorical.append(column)
 
@@ -289,7 +289,102 @@ def infer_experiment_types(
     has_complexity = "complexity" in metric_families
     has_training = "training" in metric_families
 
-    # Training experiment
+    has_confidence = (
+        "confidence" in curves
+    )
+
+    has_precision_curve = (
+        "precision_axis" in curves
+    )
+
+    has_recall_curve = (
+        "recall_axis" in curves
+    )
+
+    has_f1 = (
+        "f1" in metrics
+    )
+
+    # --------------------------------------------------------
+    # Repeated measurements
+    # --------------------------------------------------------
+
+    repeated_model_measurements = False
+
+    if has_model:
+
+        model_column = roles[
+            "model"
+        ]["column"]
+
+        repeated_model_measurements = bool(
+            data[
+                model_column
+            ]
+            .duplicated()
+            .any()
+        )
+
+    # --------------------------------------------------------
+    # Confidence / threshold curves
+    # --------------------------------------------------------
+
+    is_confidence_curve_like = (
+        has_confidence
+        and (
+            has_precision_curve
+            or has_recall_curve
+            or has_f1
+        )
+        and len(data) >= 5
+    )
+
+    # --------------------------------------------------------
+    # PR curve
+    #
+    # Confidence must NOT be present.
+    # Otherwise this is a threshold/confidence experiment.
+    # --------------------------------------------------------
+
+    is_pr_curve_like = (
+        not has_confidence
+        and has_precision_curve
+        and has_recall_curve
+        and (
+            repeated_model_measurements
+            or (
+                not has_model
+                and len(data) >= 5
+            )
+        )
+    )
+
+    # --------------------------------------------------------
+    # ROC curve
+    # --------------------------------------------------------
+
+    is_roc_curve_like = (
+        "false_positive_rate" in curves
+        and "true_positive_rate" in curves
+        and (
+            repeated_model_measurements
+            or (
+                not has_model
+                and len(data) >= 5
+            )
+        )
+    )
+
+    is_curve_like = (
+        is_confidence_curve_like
+        or is_pr_curve_like
+        or is_roc_curve_like
+    )
+
+    # --------------------------------------------------------
+    # Training
+    # --------------------------------------------------------
+
     if has_epoch and has_training:
 
         candidates.append(
@@ -303,8 +398,15 @@ def infer_experiment_types(
             }
         )
 
-    # Model benchmark
-    if has_model and has_quality:
+    # --------------------------------------------------------
+    # Benchmark
+    # --------------------------------------------------------
+
+    if (
+        has_model
+        and has_quality
+        and not is_curve_like
+    ):
 
         candidates.append(
             {
@@ -317,7 +419,10 @@ def infer_experiment_types(
             }
         )
 
-    # Accuracy-efficiency / complexity comparison
+    # --------------------------------------------------------
+    # Accuracy-efficiency
+    # --------------------------------------------------------
+
     if (
         has_model
         and has_quality
@@ -325,6 +430,7 @@ def infer_experiment_types(
             has_efficiency
             or has_complexity
         )
+        and not is_curve_like
     ):
 
         candidates.append(
@@ -338,7 +444,10 @@ def infer_experiment_types(
             }
         )
 
-    # Ablation study
+    # --------------------------------------------------------
+    # Ablation
+    # --------------------------------------------------------
+
     if has_variant and has_quality:
 
         candidates.append(
@@ -352,7 +461,10 @@ def infer_experiment_types(
             }
         )
 
-    # Robustness experiment
+    # --------------------------------------------------------
+    # Robustness
+    # --------------------------------------------------------
+
     if (
         has_model
         and has_scenario
@@ -370,63 +482,60 @@ def infer_experiment_types(
             }
         )
 
-    # PR curve:
-    # Precision + Recall alone are NOT enough.
-    # A benchmark table may contain only one P/R pair per model.
-    if (
-        "precision_axis" in curves
-        and "recall_axis" in curves
-    ):
+    # --------------------------------------------------------
+    # Confidence curves
+    # --------------------------------------------------------
 
-        repeated_model_measurements = False
+    if is_confidence_curve_like:
 
-        if has_model:
+        candidates.append(
+            {
+                "type": "confidence_curve",
+                "confidence": "high",
+                "reason": (
+                    "Confidence threshold and one or more "
+                    "Precision, Recall, or F1 series "
+                    "were detected."
+                ),
+            }
+        )
 
-            model_column = roles["model"]["column"]
+    # --------------------------------------------------------
+    # PR curve
+    # --------------------------------------------------------
 
-            repeated_model_measurements = (
-                data[model_column]
-                .duplicated()
-                .any()
-            )
+    if is_pr_curve_like:
 
-        if (
-            repeated_model_measurements
-            or (
-                not has_model
-                and len(data) >= 5
-            )
-        ):
+        candidates.append(
+            {
+                "type": "pr_curve",
+                "confidence": "high",
+                "reason": (
+                    "Precision and Recall series appear "
+                    "to contain multiple true curve points."
+                ),
+            }
+        )
 
-            candidates.append(
-                {
-                    "type": "pr_curve",
-                    "confidence": "medium",
-                    "reason": (
-                        "Precision and Recall series "
-                        "appear to contain multiple "
-                        "curve points."
-                    ),
-                }
-            )
-
+    # --------------------------------------------------------
     # ROC curve
-    if (
-        "false_positive_rate" in curves
-        and "true_positive_rate" in curves
-    ):
+    # --------------------------------------------------------
+
+    if is_roc_curve_like:
 
         candidates.append(
             {
                 "type": "roc_curve",
-                "confidence": "medium",
+                "confidence": "high",
                 "reason": (
-                    "FPR and TPR variables were detected."
+                    "FPR and TPR series appear to contain "
+                    "multiple true curve points."
                 ),
             }
         )
 
     return candidates
+
 
 
 # ------------------------------------------------------------
@@ -436,9 +545,17 @@ def infer_experiment_types(
 def build_warnings(
     data: pd.DataFrame,
     metrics: dict[str, dict[str, Any]],
+    curves: dict[str, dict[str, Any]],
 ) -> list[str]:
     """
     Generate simple data-quality warnings.
+
+    Recognition AI data may contain ordinary metrics such as
+    mAP, FPS, or Params, but some valid datasets may instead
+    contain curve variables such as FPR/TPR for ROC curves.
+
+    Therefore, the absence of ordinary metrics alone should
+    not produce a warning when valid curve variables exist.
     """
 
     warnings: list[str] = []
@@ -448,8 +565,10 @@ def build_warnings(
     )
 
     if missing_total > 0:
+
         warnings.append(
-            f"Dataset contains {missing_total} missing values."
+            f"Dataset contains "
+            f"{missing_total} missing values."
         )
 
     duplicate_rows = int(
@@ -457,13 +576,23 @@ def build_warnings(
     )
 
     if duplicate_rows > 0:
+
         warnings.append(
-            f"Dataset contains {duplicate_rows} duplicated rows."
+            f"Dataset contains "
+            f"{duplicate_rows} duplicated rows."
         )
 
-    if not metrics:
+    # Important:
+    # ROC / PR datasets may contain curve variables but no
+    # ordinary Recognition AI metric columns.
+    #
+    # Only warn when NEITHER metrics NOR curve variables
+    # are recognized.
+    if not metrics and not curves:
+
         warnings.append(
-            "No known Recognition AI metrics were detected."
+            "No known Recognition AI metrics or "
+            "curve variables were detected."
         )
 
     return warnings
@@ -510,8 +639,9 @@ def inspect_data(
     )
 
     warnings = build_warnings(
-        data,
-        metrics,
+        data=data,
+        metrics=metrics,
+        curves=curves,
     )
 
     report = {
@@ -522,13 +652,22 @@ def inspect_data(
         ),
         "shape": {
             "rows": int(len(data)),
-            "columns": int(len(data.columns)),
+            "columns": int(
+                len(data.columns)
+            ),
         },
-        "columns": list(data.columns),
+        "columns": list(
+            data.columns
+        ),
         "column_types": column_types,
         "missing_values": {
-            column: int(data[column].isna().sum())
-            for column in data.columns
+            column: int(
+                data[column]
+                .isna()
+                .sum()
+            )
+            for column
+            in data.columns
         },
         "duplicate_rows": int(
             data.duplicated().sum()
@@ -536,7 +675,9 @@ def inspect_data(
         "semantic_roles": roles,
         "metrics": metrics,
         "curve_variables": curves,
-        "candidate_experiments": experiment_types,
+        "candidate_experiments": (
+            experiment_types
+        ),
         "warnings": warnings,
     }
 
@@ -554,11 +695,17 @@ def print_report(
     Print a concise human-readable inspection report.
     """
 
-    print("sci-figure-maker data inspector")
-    print("-------------------------------")
+    print(
+        "sci-figure-maker data inspector"
+    )
 
     print(
-        f"Source: {report['source']}"
+        "-------------------------------"
+    )
+
+    print(
+        f"Source: "
+        f"{report['source']}"
     )
 
     print(
@@ -568,6 +715,10 @@ def print_report(
     )
 
     print()
+
+    # --------------------------------------------------------
+    # Semantic roles
+    # --------------------------------------------------------
 
     print("Semantic roles:")
 
@@ -583,9 +734,16 @@ def print_report(
             )
 
     else:
-        print("  None detected")
+
+        print(
+            "  None detected"
+        )
 
     print()
+
+    # --------------------------------------------------------
+    # Metrics
+    # --------------------------------------------------------
 
     print("Metrics:")
 
@@ -603,31 +761,78 @@ def print_report(
             )
 
     else:
-        print("  None detected")
+
+        print(
+            "  None detected"
+        )
 
     print()
 
-    print("Candidate experiments:")
+    # --------------------------------------------------------
+    # Curve variables
+    # --------------------------------------------------------
 
-    if report["candidate_experiments"]:
+    print("Curve variables:")
+
+    if report["curve_variables"]:
+
+        for variable, info in report[
+            "curve_variables"
+        ].items():
+
+            print(
+                f"  - {variable}: "
+                f"{info['column']}"
+            )
+
+    else:
+
+        print(
+            "  None detected"
+        )
+
+    print()
+
+    # --------------------------------------------------------
+    # Candidate experiments
+    # --------------------------------------------------------
+
+    print(
+        "Candidate experiments:"
+    )
+
+    if report[
+        "candidate_experiments"
+    ]:
 
         for candidate in report[
             "candidate_experiments"
         ]:
 
             print(
-                f"  - {candidate['type']} "
-                f"({candidate['confidence']})"
+                f"  - "
+                f"{candidate['type']} "
+                f"("
+                f"{candidate['confidence']}"
+                f")"
             )
 
             print(
-                f"    {candidate['reason']}"
+                f"    "
+                f"{candidate['reason']}"
             )
 
     else:
-        print("  None detected")
+
+        print(
+            "  None detected"
+        )
 
     print()
+
+    # --------------------------------------------------------
+    # Data quality
+    # --------------------------------------------------------
 
     print(
         f"Duplicate rows: "
@@ -635,20 +840,31 @@ def print_report(
     )
 
     total_missing = sum(
-        report["missing_values"].values()
+        report[
+            "missing_values"
+        ].values()
     )
 
     print(
-        f"Missing values: {total_missing}"
+        f"Missing values: "
+        f"{total_missing}"
     )
 
     if report["warnings"]:
 
         print()
-        print("Warnings:")
 
-        for warning in report["warnings"]:
-            print(f"  - {warning}")
+        print(
+            "Warnings:"
+        )
+
+        for warning in report[
+            "warnings"
+        ]:
+
+            print(
+                f"  - {warning}"
+            )
 
 
 # ------------------------------------------------------------
@@ -656,25 +872,33 @@ def print_report(
 # ------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
+    """
+    Build command-line parser.
+    """
 
     parser = argparse.ArgumentParser(
         description=(
-            "Inspect scientific experimental data "
-            "and infer Recognition AI semantics."
+            "Inspect scientific experimental "
+            "data and infer Recognition AI "
+            "semantics."
         )
     )
 
     parser.add_argument(
         "--input",
         required=True,
-        help="Input CSV, TSV, TXT, or XLSX file.",
+        help=(
+            "Input CSV, TSV, TXT, "
+            "or XLSX file."
+        ),
     )
 
     parser.add_argument(
         "--sheet",
         default=0,
         help=(
-            "Excel sheet name or zero-based index."
+            "Excel sheet name or "
+            "zero-based index."
         ),
     )
 
@@ -685,7 +909,8 @@ def build_parser() -> argparse.ArgumentParser:
             "data_report.json"
         ),
         help=(
-            "Path for the generated JSON report."
+            "Path for the generated "
+            "JSON report."
         ),
     )
 
@@ -695,21 +920,33 @@ def build_parser() -> argparse.ArgumentParser:
 def parse_sheet_argument(
     value: str,
 ) -> str | int:
+    """
+    Convert a numeric sheet argument to int.
+
+    Non-numeric values are returned as strings.
+    """
 
     try:
+
         return int(value)
 
     except ValueError:
+
         return value
 
 
 def main() -> None:
+    """
+    Command-line entry point.
+    """
 
     parser = build_parser()
 
     args = parser.parse_args()
 
-    input_path = Path(args.input)
+    input_path = Path(
+        args.input
+    )
 
     data = load_data(
         input_path,
@@ -723,9 +960,13 @@ def main() -> None:
         source=input_path,
     )
 
-    print_report(report)
+    print_report(
+        report
+    )
 
-    output_path = Path(args.output)
+    output_path = Path(
+        args.output
+    )
 
     output_path.parent.mkdir(
         parents=True,
@@ -745,6 +986,7 @@ def main() -> None:
         )
 
     print()
+
     print(
         f"JSON report saved to: "
         f"{output_path}"

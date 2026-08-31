@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -10,12 +11,7 @@ import pandas as pd
 from scripts.inspect_data import inspect_data
 from scripts.load_data import load_data
 from scripts.select_plot import build_selection_report
-from scripts.template_registry import SEMANTIC_TO_TEMPLATE
 
-
-# ------------------------------------------------------------
-# Metric priorities
-# ------------------------------------------------------------
 
 QUALITY_PRIORITY = [
     "map50_95",
@@ -25,10 +21,8 @@ QUALITY_PRIORITY = [
     "miou",
     "dice",
     "auc",
-    "ap",
     "precision",
     "recall",
-    "iou",
 ]
 
 EFFICIENCY_PRIORITY = [
@@ -43,28 +37,43 @@ COMPLEXITY_PRIORITY = [
 
 
 # ------------------------------------------------------------
-# Small lookup helpers
+# Helpers
 # ------------------------------------------------------------
 
-def role_column(
+def _normalize(
+    value: str,
+) -> str:
+
+    return re.sub(
+        r"[^a-z0-9]+",
+        "",
+        str(value).lower(),
+    )
+
+
+def _role_column(
     inspection: dict[str, Any],
     role: str,
 ) -> str | None:
 
-    role_info = inspection.get(
+    info = inspection.get(
         "semantic_roles",
         {},
-    ).get(role)
+    ).get(
+        role
+    )
 
-    if not role_info:
+    if not info:
         return None
 
-    return role_info.get("column")
+    return info.get(
+        "column"
+    )
 
 
-def metric_column(
+def _metric_column(
     inspection: dict[str, Any],
-    candidates: list[str],
+    names: list[str],
 ) -> str | None:
 
     metrics = inspection.get(
@@ -72,148 +81,95 @@ def metric_column(
         {},
     )
 
-    for metric_name in candidates:
+    for name in names:
 
-        metric_info = metrics.get(
-            metric_name
-        )
+        if name in metrics:
 
-        if metric_info:
-            return metric_info.get(
-                "column"
-            )
+            return metrics[
+                name
+            ]["column"]
 
     return None
 
 
-def metric_columns_by_family(
+def _quality_columns(
     inspection: dict[str, Any],
-    family: str,
 ) -> list[str]:
 
-    result = []
-
-    for metric_info in inspection.get(
+    metrics = inspection.get(
         "metrics",
         {},
-    ).values():
+    )
+
+    columns: list[str] = []
+
+    for name in QUALITY_PRIORITY:
+
+        info = metrics.get(
+            name
+        )
 
         if (
-            metric_info.get("family")
-            == family
-        ):
-            column = metric_info.get(
-                "column"
+            info
+            and info.get(
+                "family"
             )
+            == "quality"
+        ):
 
-            if (
-                column
-                and column not in result
-            ):
-                result.append(column)
+            column = info[
+                "column"
+            ]
 
-    return result
+            if column not in columns:
+
+                columns.append(
+                    column
+                )
+
+    return columns
 
 
-def curve_column(
+def _curve_column(
     inspection: dict[str, Any],
-    variable: str,
+    name: str,
 ) -> str | None:
 
     info = inspection.get(
         "curve_variables",
         {},
-    ).get(variable)
+    ).get(
+        name
+    )
 
     if not info:
         return None
 
-    return info.get("column")
-
-
-# ------------------------------------------------------------
-# Highlight detection
-# ------------------------------------------------------------
-
-def infer_highlight(
-    data: pd.DataFrame,
-    identity_column: str | None,
-    requested: str | None = None,
-) -> str | None:
-    """
-    Prefer an explicitly supplied highlight.
-
-    Otherwise only recognize conservative,
-    common labels such as 'Ours'.
-    """
-
-    if requested:
-        return requested
-
-    if not identity_column:
-        return None
-
-    if identity_column not in data.columns:
-        return None
-
-    values = [
-        str(value)
-        for value in data[
-            identity_column
-        ].dropna().unique()
-    ]
-
-    preferred = {
-        "ours",
-        "our model",
-        "proposed",
-        "proposed model",
-    }
-
-    for value in values:
-
-        if value.strip().lower() in preferred:
-            return value
-
-    return None
-
-
-# ------------------------------------------------------------
-# Training-curve helper
-# ------------------------------------------------------------
-
-def find_training_columns(
-    data: pd.DataFrame,
-    x_column: str | None,
-) -> list[str]:
-    """
-    Find plausible training/metric columns.
-
-    This intentionally uses column-name hints as well
-    as numeric dtype because one table may contain
-    train_loss, val_loss, mAP, Precision, Recall, etc.
-    """
-
-    tokens = (
-        "loss",
-        "acc",
-        "accuracy",
-        "precision",
-        "recall",
-        "map",
-        "f1",
-        "auc",
-        "iou",
-        "dice",
-        "lr",
-        "learning_rate",
+    return info.get(
+        "column"
     )
 
-    result = []
+
+# ------------------------------------------------------------
+# Training semantic planning
+# ------------------------------------------------------------
+
+def _training_families(
+    data: pd.DataFrame,
+    epoch_column: str,
+) -> dict[str, list[str]]:
+
+    loss_columns: list[str] = []
+
+    performance_columns: list[str] = []
+
+    learning_rate_columns: list[
+        str
+    ] = []
 
     for column in data.columns:
 
-        if column == x_column:
+        if column == epoch_column:
             continue
 
         if not pd.api.types.is_numeric_dtype(
@@ -221,120 +177,11 @@ def find_training_columns(
         ):
             continue
 
-        normalized = (
-            str(column)
-            .strip()
-            .lower()
+        name = _normalize(
+            column
         )
 
-        if any(
-            token in normalized
-            for token in tokens
-        ):
-            result.append(column)
-
-    return result
-
-# ------------------------------------------------------------
-# Training figure expansion
-# ------------------------------------------------------------
-
-def pretty_metric_label(
-    column: str,
-) -> str:
-    """
-    Convert common raw column names into
-    cleaner publication labels.
-    """
-
-    normalized = (
-        str(column)
-        .strip()
-        .lower()
-    )
-
-    labels = {
-        "train_loss": "Train loss",
-        "training_loss": "Train loss",
-        "val_loss": "Validation loss",
-        "validation_loss": "Validation loss",
-        "map50": "mAP@0.5",
-        "map50_95": "mAP@0.5:0.95",
-        "precision": "Precision",
-        "recall": "Recall",
-        "accuracy": "Accuracy",
-        "acc": "Accuracy",
-        "f1": "F1",
-        "f1_score": "F1",
-        "auc": "AUC",
-        "iou": "IoU",
-        "miou": "mIoU",
-        "dice": "Dice",
-    }
-
-    return labels.get(
-        normalized,
-        str(column).replace(
-            "_",
-            " ",
-        ),
-    )
-
-
-def plan_training_variants(
-    data: pd.DataFrame,
-    inspection: dict[str, Any],
-) -> list[dict[str, Any]]:
-    """
-    Split training data into scientifically
-    compatible line figures.
-
-    Loss metrics and performance metrics should
-    not normally share one y-axis because their
-    scales and meanings are different.
-    """
-
-    epoch = role_column(
-        inspection,
-        "epoch",
-    )
-
-    if not epoch:
-        return []
-
-    loss_columns = []
-    performance_columns = []
-
-    performance_tokens = (
-        "map",
-        "accuracy",
-        "acc",
-        "precision",
-        "recall",
-        "f1",
-        "auc",
-        "iou",
-        "miou",
-        "dice",
-    )
-
-    for column in data.columns:
-
-        if column == epoch:
-            continue
-
-        if not pd.api.types.is_numeric_dtype(
-            data[column]
-        ):
-            continue
-
-        normalized = (
-            str(column)
-            .strip()
-            .lower()
-        )
-
-        if "loss" in normalized:
+        if "loss" in name:
 
             loss_columns.append(
                 column
@@ -342,43 +189,230 @@ def plan_training_variants(
 
             continue
 
-        if any(
-            token in normalized
-            for token
-            in performance_tokens
+        if (
+            name
+            in {
+                "lr",
+                "learningrate",
+                "learningrate0",
+                "learningrate1",
+                "learningrate2",
+            }
+            or name.startswith(
+                "lr"
+            )
+        ):
+
+            learning_rate_columns.append(
+                column
+            )
+
+            continue
+
+        if (
+            name.startswith(
+                "map"
+            )
+            or name.startswith(
+                "precision"
+            )
+            or name.startswith(
+                "recall"
+            )
+            or name.startswith(
+                "accuracy"
+            )
+            or name.startswith(
+                "acc"
+            )
+            or name.startswith(
+                "f1"
+            )
+            or name.startswith(
+                "miou"
+            )
+            or name.startswith(
+                "iou"
+            )
+            or name.startswith(
+                "dice"
+            )
+            or name.startswith(
+                "auc"
+            )
         ):
 
             performance_columns.append(
                 column
             )
 
-    variants = []
+    return {
+        "loss": loss_columns,
+        "performance": (
+            performance_columns
+        ),
+        "learning_rate": (
+            learning_rate_columns
+        ),
+    }
 
 
-    if loss_columns:
+def _training_summary(
+    data: pd.DataFrame,
+    epoch_column: str,
+    families: dict[
+        str,
+        list[str],
+    ],
+) -> dict[str, Any]:
 
-        variants.append(
+    summary: dict[
+        str,
+        Any,
+    ] = {}
+
+    validation_losses = [
+        column
+        for column
+        in families["loss"]
+        if (
+            "val"
+            in _normalize(
+                column
+            )
+            or "validation"
+            in _normalize(
+                column
+            )
+        )
+    ]
+
+    if validation_losses:
+
+        column = validation_losses[
+            0
+        ]
+
+        numeric = pd.to_numeric(
+            data[column],
+            errors="coerce",
+        )
+
+        if numeric.notna().any():
+
+            index = numeric.idxmin()
+
+            summary[
+                "best_validation_loss"
+            ] = {
+                "column": column,
+                "epoch": data.loc[
+                    index,
+                    epoch_column,
+                ],
+                "value": float(
+                    numeric.loc[
+                        index
+                    ]
+                ),
+            }
+
+    best_performance: dict[
+        str,
+        Any,
+    ] = {}
+
+    for column in families[
+        "performance"
+    ]:
+
+        numeric = pd.to_numeric(
+            data[column],
+            errors="coerce",
+        )
+
+        if not numeric.notna().any():
+            continue
+
+        index = numeric.idxmax()
+
+        best_performance[
+            column
+        ] = {
+            "epoch": data.loc[
+                index,
+                epoch_column,
+            ],
+            "value": float(
+                numeric.loc[
+                    index
+                ]
+            ),
+        }
+
+    if best_performance:
+
+        summary[
+            "best_performance"
+        ] = best_performance
+
+    return summary
+
+
+def _training_plans(
+    data: pd.DataFrame,
+    inspection: dict[str, Any],
+) -> tuple[
+    list[dict[str, Any]],
+    dict[str, Any],
+]:
+
+    epoch_column = _role_column(
+        inspection,
+        "epoch",
+    )
+
+    if not epoch_column:
+
+        return [], {}
+
+    families = _training_families(
+        data,
+        epoch_column,
+    )
+
+    plans: list[
+        dict[str, Any]
+    ] = []
+
+    if families[
+        "loss"
+    ]:
+
+        plans.append(
             {
                 "figure": (
-                    "training_loss_curve"
+                    "training_loss"
                 ),
                 "title": (
-                    "Training Loss Curves"
+                    "Training Loss"
+                ),
+                "template": "line",
+                "priority": 100,
+                "reason": (
+                    "Loss metrics were separated "
+                    "from performance metrics."
                 ),
                 "parameters": {
-                    "x": epoch,
-                    "ys": (
-                        loss_columns[:4]
-                    ),
-                    "labels": [
-                        pretty_metric_label(
-                            column
-                        )
-                        for column
-                        in loss_columns[:4]
+                    "x": epoch_column,
+                    "ys": families[
+                        "loss"
+                    ],
+                    "labels": families[
+                        "loss"
                     ],
                     "title": (
-                        "Training Loss Curves"
+                        "Training Loss"
                     ),
                     "xlabel": "Epoch",
                     "ylabel": "Loss",
@@ -386,317 +420,641 @@ def plan_training_variants(
             }
         )
 
-    # --------------------------------------------------------
-    # Performance curves
-    # --------------------------------------------------------
+    if families[
+        "performance"
+    ]:
 
-    if performance_columns:
-
-        variants.append(
+        plans.append(
             {
                 "figure": (
-                    "training_metric_curve"
+                    "training_metrics"
                 ),
                 "title": (
-                    "Training Metric Curves"
+                    "Training Performance"
+                ),
+                "template": "line",
+                "priority": 95,
+                "reason": (
+                    "Performance metrics were "
+                    "separated from loss."
                 ),
                 "parameters": {
-                    "x": epoch,
-                    "ys": (
-                        performance_columns[
-                            :6
-                        ]
-                    ),
-                    "labels": [
-                        pretty_metric_label(
-                            column
-                        )
-                        for column
-                        in performance_columns[
-                            :6
-                        ]
+                    "x": epoch_column,
+                    "ys": families[
+                        "performance"
+                    ],
+                    "labels": families[
+                        "performance"
                     ],
                     "title": (
-                        "Training Metric Curves"
+                        "Training Performance"
                     ),
                     "xlabel": "Epoch",
                     "ylabel": (
-                        "Metric value"
+                        "Performance"
                     ),
                 },
             }
         )
 
-    return variants
+    if families[
+        "learning_rate"
+    ]:
 
-def plan_parameters(
-    figure_id: str,
-    data: pd.DataFrame,
+        plans.append(
+            {
+                "figure": (
+                    "learning_rate_curve"
+                ),
+                "title": (
+                    "Learning Rate"
+                ),
+                "template": "line",
+                "priority": 80,
+                "reason": (
+                    "Learning-rate values "
+                    "use a separate scale."
+                ),
+                "parameters": {
+                    "x": epoch_column,
+                    "ys": families[
+                        "learning_rate"
+                    ],
+                    "labels": families[
+                        "learning_rate"
+                    ],
+                    "title": (
+                        "Learning Rate"
+                    ),
+                    "xlabel": "Epoch",
+                    "ylabel": (
+                        "Learning Rate"
+                    ),
+                },
+            }
+        )
+
+    summary = _training_summary(
+        data,
+        epoch_column,
+        families,
+    )
+
+    return (
+        plans,
+        summary,
+    )
+
+
+# ------------------------------------------------------------
+# Confidence / threshold curves
+# ------------------------------------------------------------
+
+def _confidence_plans(
     inspection: dict[str, Any],
-    highlight: str | None = None,
+) -> list[dict[str, Any]]:
+
+    confidence = _curve_column(
+        inspection,
+        "confidence",
+    )
+
+    if not confidence:
+
+        return []
+
+    metrics = inspection.get(
+        "metrics",
+        {},
+    )
+
+    definitions = [
+        (
+            "precision",
+            "precision_confidence",
+            "Precision–Confidence Curve",
+            "Precision",
+        ),
+        (
+            "recall",
+            "recall_confidence",
+            "Recall–Confidence Curve",
+            "Recall",
+        ),
+        (
+            "f1",
+            "f1_confidence",
+            "F1–Confidence Curve",
+            "F1",
+        ),
+    ]
+
+    plans: list[
+        dict[str, Any]
+    ] = []
+
+    for (
+        metric_name,
+        figure_id,
+        title,
+        ylabel,
+    ) in definitions:
+
+        info = metrics.get(
+            metric_name
+        )
+
+        if not info:
+            continue
+
+        y_column = info.get(
+            "column"
+        )
+
+        if not y_column:
+            continue
+
+        plans.append(
+            {
+                "figure": figure_id,
+                "title": title,
+                "template": "line",
+                "priority": 100,
+                "reason": (
+                    f"{ylabel} values were "
+                    "measured across confidence "
+                    "thresholds."
+                ),
+                "parameters": {
+                    "x": confidence,
+                    "ys": [
+                        y_column
+                    ],
+                    "labels": [
+                        ylabel
+                    ],
+                    "title": title,
+                    "xlabel": (
+                        "Confidence"
+                    ),
+                    "ylabel": ylabel,
+                    "xlim": (
+                        0.0,
+                        1.0,
+                    ),
+                    "ylim": (
+                        0.0,
+                        1.0,
+                    ),
+                },
+            }
+        )
+
+    return plans
+
+
+# ------------------------------------------------------------
+# Standard figure plans
+# ------------------------------------------------------------
+
+def _plan_for_figure(
+    inspection: dict[str, Any],
+    recommendation: dict[str, Any],
+    *,
+    highlight: str | None,
 ) -> dict[str, Any] | None:
 
-    model = role_column(
+    figure = recommendation[
+        "figure"
+    ]
+
+    model_column = _role_column(
         inspection,
         "model",
     )
 
-    variant = role_column(
-        inspection,
-        "variant",
-    )
-
-    scenario = role_column(
-        inspection,
-        "scenario",
-    )
-
-    epoch = role_column(
-        inspection,
-        "epoch",
-    )
-
-    quality = metric_column(
-        inspection,
-        QUALITY_PRIORITY,
-    )
-
-    efficiency = metric_column(
-        inspection,
-        EFFICIENCY_PRIORITY,
-    )
-
-    complexity = metric_column(
-        inspection,
-        COMPLEXITY_PRIORITY,
-    )
-
-    detected_highlight = (
-        infer_highlight(
-            data,
-            model,
-            highlight,
+    quality_columns = (
+        _quality_columns(
+            inspection
         )
     )
 
+    quality_column = (
+        quality_columns[0]
+        if quality_columns
+        else None
+    )
+
     # --------------------------------------------------------
-    # Accuracy–Efficiency
+    # PR
     # --------------------------------------------------------
 
-    if figure_id == "accuracy_efficiency":
+    if figure == "pr_curve":
 
-        if not (
-            model
-            and quality
-            and efficiency
+        recall = _curve_column(
+            inspection,
+            "recall_axis",
+        )
+
+        precision = _curve_column(
+            inspection,
+            "precision_axis",
+        )
+
+        if (
+            not recall
+            or not precision
         ):
+
             return None
 
         return {
-            "x": efficiency,
-            "y": quality,
-            "label": model,
-            "size": complexity,
-            "highlight": detected_highlight,
-            "xlabel": efficiency,
-            "ylabel": quality,
-            "title": "Accuracy–Efficiency",
+            "figure": "pr_curve",
+            "title": (
+                "Precision–Recall Curve"
+            ),
+            "template": "line",
+            "priority": (
+                recommendation[
+                    "priority"
+                ]
+            ),
+            "reason": (
+                recommendation[
+                    "reason"
+                ]
+            ),
+            "parameters": {
+                "x": recall,
+                "y": precision,
+                "group": (
+                    model_column
+                ),
+                "highlight": (
+                    highlight
+                ),
+                "title": (
+                    "Precision–Recall Curve"
+                ),
+                "xlabel": "Recall",
+                "ylabel": "Precision",
+            },
+        }
+
+    # --------------------------------------------------------
+    # ROC
+    # --------------------------------------------------------
+
+    if figure == "roc_curve":
+
+        fpr = _curve_column(
+            inspection,
+            "false_positive_rate",
+        )
+
+        tpr = _curve_column(
+            inspection,
+            "true_positive_rate",
+        )
+
+        if (
+            not fpr
+            or not tpr
+        ):
+
+            return None
+
+        return {
+            "figure": "roc_curve",
+            "title": "ROC Curve",
+            "template": "line",
+            "priority": (
+                recommendation[
+                    "priority"
+                ]
+            ),
+            "reason": (
+                recommendation[
+                    "reason"
+                ]
+            ),
+            "parameters": {
+                "x": fpr,
+                "y": tpr,
+                "group": (
+                    model_column
+                ),
+                "highlight": (
+                    highlight
+                ),
+                "title": "ROC Curve",
+                "xlabel": (
+                    "False Positive Rate"
+                ),
+                "ylabel": (
+                    "True Positive Rate"
+                ),
+            },
         }
 
     # --------------------------------------------------------
     # Model comparison
     # --------------------------------------------------------
 
-    if figure_id == "model_comparison":
+    if (
+        figure
+        == "model_comparison"
+    ):
 
-        if not model:
+        if (
+            not model_column
+            or not quality_columns
+        ):
+
             return None
 
-        quality_columns = (
-            metric_columns_by_family(
+        return {
+            "figure": (
+                "model_comparison"
+            ),
+            "title": (
+                "Model Comparison"
+            ),
+            "template": (
+                "grouped_bar"
+            ),
+            "priority": (
+                recommendation[
+                    "priority"
+                ]
+            ),
+            "reason": (
+                recommendation[
+                    "reason"
+                ]
+            ),
+            "parameters": {
+                "category": (
+                    model_column
+                ),
+                "values": (
+                    quality_columns[
+                        :4
+                    ]
+                ),
+                "title": (
+                    "Model Comparison"
+                ),
+                "xlabel": None,
+                "ylabel": (
+                    "Performance"
+                ),
+            },
+        }
+
+    # --------------------------------------------------------
+    # Ranking
+    # --------------------------------------------------------
+
+    if (
+        figure
+        == "model_ranking"
+    ):
+
+        if (
+            not model_column
+            or not quality_column
+        ):
+
+            return None
+
+        return {
+            "figure": (
+                "model_ranking"
+            ),
+            "title": (
+                "Model Ranking"
+            ),
+            "template": "lollipop",
+            "priority": (
+                recommendation[
+                    "priority"
+                ]
+            ),
+            "reason": (
+                recommendation[
+                    "reason"
+                ]
+            ),
+            "parameters": {
+                "category": (
+                    model_column
+                ),
+                "value": (
+                    quality_column
+                ),
+                "highlight": (
+                    highlight
+                ),
+                "sort": True,
+                "title": (
+                    "Model Ranking"
+                ),
+                "xlabel": (
+                    quality_column
+                ),
+            },
+        }
+
+    # --------------------------------------------------------
+    # Accuracy-efficiency
+    # --------------------------------------------------------
+
+    if (
+        figure
+        == "accuracy_efficiency"
+    ):
+
+        efficiency = (
+            _metric_column(
                 inspection,
-                "quality",
+                EFFICIENCY_PRIORITY,
             )
         )
 
-        if not quality_columns:
-            return None
-
-        return {
-            "category": model,
-            "values": quality_columns[:4],
-            "title": "Model Comparison",
-            "ylabel": "Performance",
-        }
-
-    # --------------------------------------------------------
-    # Model ranking
-    # --------------------------------------------------------
-
-    if figure_id == "model_ranking":
-
-        if not (
-            model
-            and quality
-        ):
-            return None
-
-        return {
-            "category": model,
-            "value": quality,
-            "highlight": detected_highlight,
-            "sort": True,
-            "title": "Model Ranking",
-            "xlabel": quality,
-        }
-
-    # --------------------------------------------------------
-    # Training curve
-    # --------------------------------------------------------
-
-    if figure_id == "training_curve":
-
-        if not epoch:
-            return None
-
-        y_columns = find_training_columns(
-            data,
-            epoch,
+        complexity = (
+            _metric_column(
+                inspection,
+                COMPLEXITY_PRIORITY,
+            )
         )
 
-        if not y_columns:
+        if (
+            not model_column
+            or not quality_column
+            or not efficiency
+        ):
+
             return None
 
         return {
-            "x": epoch,
-            "ys": y_columns[:6],
-            "title": "Training / Metric Curves",
-            "xlabel": epoch,
+            "figure": (
+                "accuracy_efficiency"
+            ),
+            "title": (
+                "Accuracy–Efficiency Trade-off"
+            ),
+            "template": (
+                "scatter_bubble"
+            ),
+            "priority": (
+                recommendation[
+                    "priority"
+                ]
+            ),
+            "reason": (
+                recommendation[
+                    "reason"
+                ]
+            ),
+            "parameters": {
+                "x": efficiency,
+                "y": (
+                    quality_column
+                ),
+                "label": (
+                    model_column
+                ),
+                "size": (
+                    complexity
+                ),
+                "highlight": (
+                    highlight
+                ),
+                "title": (
+                    "Accuracy–Efficiency"
+                ),
+                "xlabel": (
+                    efficiency
+                ),
+                "ylabel": (
+                    quality_column
+                ),
+            },
         }
 
     # --------------------------------------------------------
     # Ablation
     # --------------------------------------------------------
 
-    if figure_id == "ablation":
+    if figure == "ablation":
 
-        if not (
-            variant
-            and quality
-        ):
-            return None
-
-        variant_highlight = (
-            infer_highlight(
-                data,
-                variant,
-                highlight,
-            )
+        variant = _role_column(
+            inspection,
+            "variant",
         )
 
+        if (
+            not variant
+            or not quality_columns
+        ):
+
+            return None
+
         return {
-            "category": variant,
-            "value": quality,
-            "highlight": variant_highlight,
-            "sort": False,
-            "title": "Ablation Study",
-            "xlabel": quality,
+            "figure": "ablation",
+            "title": (
+                "Ablation Study"
+            ),
+            "template": (
+                "grouped_bar"
+            ),
+            "priority": (
+                recommendation[
+                    "priority"
+                ]
+            ),
+            "reason": (
+                recommendation[
+                    "reason"
+                ]
+            ),
+            "parameters": {
+                "category": variant,
+                "values": (
+                    quality_columns[
+                        :4
+                    ]
+                ),
+                "title": (
+                    "Ablation Study"
+                ),
+                "xlabel": None,
+                "ylabel": (
+                    "Performance"
+                ),
+            },
         }
 
     # --------------------------------------------------------
-    # Robustness heatmap
+    # Robustness
     # --------------------------------------------------------
 
-    if figure_id == "robustness_heatmap":
+    if (
+        figure
+        == "robustness_heatmap"
+    ):
 
-        if not (
-            model
-            and scenario
-            and quality
-        ):
-            return None
-
-        # Dispatcher will pivot long-form data:
-        #
-        # Model | Scenario | mAP
-        #
-        # into:
-        #
-        # Model | Smoke | Blur | ...
-        return {
-            "row": model,
-            "column": scenario,
-            "value": quality,
-            "title": "Robustness Heatmap",
-        }
-
-    # --------------------------------------------------------
-    # Precision–Recall curve
-    # --------------------------------------------------------
-
-    if figure_id == "pr_curve":
-
-        recall_axis = curve_column(
+        scenario = _role_column(
             inspection,
-            "recall_axis",
+            "scenario",
         )
 
-        precision_axis = curve_column(
-            inspection,
-            "precision_axis",
-        )
-
-        if not (
-            recall_axis
-            and precision_axis
+        if (
+            not model_column
+            or not scenario
+            or not quality_column
         ):
+
             return None
 
         return {
-            "x": recall_axis,
-            "y": precision_axis,
-            "group": model,
-            "title": "Precision–Recall Curve",
-            "xlabel": "Recall",
-            "ylabel": "Precision",
-        }
-
-    # --------------------------------------------------------
-    # ROC curve
-    # --------------------------------------------------------
-
-    if figure_id == "roc_curve":
-
-        fpr = curve_column(
-            inspection,
-            "false_positive_rate",
-        )
-
-        tpr = curve_column(
-            inspection,
-            "true_positive_rate",
-        )
-
-        if not (
-            fpr
-            and tpr
-        ):
-            return None
-
-        return {
-            "x": fpr,
-            "y": tpr,
-            "group": model,
-            "title": "ROC Curve",
-            "xlabel": "False Positive Rate",
-            "ylabel": "True Positive Rate",
+            "figure": (
+                "robustness_heatmap"
+            ),
+            "title": (
+                "Robustness Heatmap"
+            ),
+            "template": "heatmap",
+            "priority": (
+                recommendation[
+                    "priority"
+                ]
+            ),
+            "reason": (
+                recommendation[
+                    "reason"
+                ]
+            ),
+            "parameters": {
+                "row": (
+                    model_column
+                ),
+                "column": scenario,
+                "value": (
+                    quality_column
+                ),
+                "title": (
+                    "Robustness Heatmap"
+                ),
+            },
         }
 
     return None
 
 
 # ------------------------------------------------------------
-# Full figure planning
+# Full planner
 # ------------------------------------------------------------
 
 def build_figure_plan(
@@ -708,238 +1066,136 @@ def build_figure_plan(
     top: int = 3,
 ) -> dict[str, Any]:
 
-    plans = []
-    skipped = []
+    plans: list[
+        dict[str, Any]
+    ] = []
 
-    recommendations = selection.get(
-        "recommendations",
-        [],
-    )
+    training_summary: dict[
+        str,
+        Any,
+    ] = {}
 
-    for recommendation in recommendations:
+    for recommendation in (
+        selection.get(
+            "recommendations",
+            [],
+        )
+    ):
 
-        figure_id = recommendation[
-            "figure"
-        ]
-                # ----------------------------------------------------
-        # Training recommendation can expand into
-        # multiple scientifically compatible figures.
+        # ----------------------------------------------------
+        # Training expands into multiple semantic figures
         # ----------------------------------------------------
 
-        if figure_id == "training_curve":
+        if (
+            recommendation[
+                "figure"
+            ]
+            == "training_curve"
+        ):
 
-            training_variants = (
-                plan_training_variants(
-                    data,
-                    inspection,
-                )
+            (
+                training_plans,
+                summary,
+            ) = _training_plans(
+                data,
+                inspection,
             )
 
-            if not training_variants:
+            plans.extend(
+                training_plans
+            )
 
-                skipped.append(
-                    {
-                        "figure": figure_id,
-                        "reason": (
-                            "No suitable training "
-                            "curve variables could "
-                            "be resolved."
-                        ),
-                    }
+            if summary:
+
+                training_summary = (
+                    summary
                 )
-
-                continue
-
-            for variant in training_variants:
-
-                plans.append(
-                    {
-                        "figure": variant[
-                            "figure"
-                        ],
-                        "title": variant[
-                            "title"
-                        ],
-                        "priority": recommendation[
-                            "priority"
-                        ],
-                        "reason": recommendation[
-                            "reason"
-                        ],
-                        "template": "line",
-                        "parameters": variant[
-                            "parameters"
-                        ],
-                    }
-                )
-
-                if len(plans) >= top:
-                    break
-
-            if len(plans) >= top:
-                break
 
             continue
 
-        template = (
-            SEMANTIC_TO_TEMPLATE.get(
-                figure_id
-            )
-        )
+        # ----------------------------------------------------
+        # Confidence expands into P/R/F1 curves
+        # ----------------------------------------------------
 
-        # Scientific recommendation exists,
-        # but our template library does not
-        # currently know how to render it.
-        if template is None:
+        if (
+            recommendation[
+                "figure"
+            ]
+            == "confidence_curve"
+        ):
 
-            skipped.append(
-                {
-                    "figure": figure_id,
-                    "reason": (
-                        "No visual template is "
-                        "registered yet."
-                    ),
-                }
+            plans.extend(
+                _confidence_plans(
+                    inspection
+                )
             )
 
             continue
 
-        parameters = plan_parameters(
-            figure_id=figure_id,
-            data=data,
-            inspection=inspection,
+        # ----------------------------------------------------
+        # Normal one-to-one plans
+        # ----------------------------------------------------
+
+        plan = _plan_for_figure(
+            inspection,
+            recommendation,
             highlight=highlight,
         )
 
-        if parameters is None:
+        if plan is not None:
 
-            skipped.append(
-                {
-                    "figure": figure_id,
-                    "template": template,
-                    "reason": (
-                        "Required plotting roles "
-                        "could not be resolved."
-                    ),
-                }
+            plans.append(
+                plan
             )
 
+    # --------------------------------------------------------
+    # Remove duplicate figure IDs
+    # --------------------------------------------------------
+
+    unique_plans: list[
+        dict[str, Any]
+    ] = []
+
+    seen: set[str] = set()
+
+    for plan in plans:
+
+        figure = plan[
+            "figure"
+        ]
+
+        if figure in seen:
             continue
 
-        plans.append(
-            {
-                "figure": figure_id,
-                "title": recommendation[
-                    "title"
-                ],
-                "priority": recommendation[
-                    "priority"
-                ],
-                "reason": recommendation[
-                    "reason"
-                ],
-                "template": template,
-                "parameters": parameters,
-            }
+        seen.add(
+            figure
         )
 
-        if len(plans) >= top:
-            break
+        unique_plans.append(
+            plan
+        )
+
+    if top > 0:
+
+        unique_plans = (
+            unique_plans[
+                :top
+            ]
+        )
 
     return {
         "source": inspection.get(
             "source"
         ),
-        "plans": plans,
-        "skipped": skipped,
+        "plans": unique_plans,
+        "training_summary": (
+            training_summary
+        ),
         "warnings": inspection.get(
             "warnings",
             [],
         ),
     }
-
-
-# ------------------------------------------------------------
-# Console report
-# ------------------------------------------------------------
-
-def print_figure_plan(
-    report: dict[str, Any],
-) -> None:
-
-    print(
-        "sci-figure-maker figure planner"
-    )
-
-    print(
-        "--------------------------------"
-    )
-
-    print(
-        f"Source: {report['source']}"
-    )
-
-    print()
-
-    plans = report["plans"]
-
-    if not plans:
-
-        print(
-            "No renderable figure plan "
-            "could be generated."
-        )
-
-    else:
-
-        print("Planned figures:")
-
-        for index, plan in enumerate(
-            plans,
-            start=1,
-        ):
-
-            print()
-
-            print(
-                f"{index}. "
-                f"{plan['title']}"
-            )
-
-            print(
-                f"   Figure: "
-                f"{plan['figure']}"
-            )
-
-            print(
-                f"   Template: "
-                f"{plan['template']}"
-            )
-
-            print(
-                "   Parameters:"
-            )
-
-            for key, value in plan[
-                "parameters"
-            ].items():
-
-                print(
-                    f"     {key}: {value}"
-                )
-
-    if report["skipped"]:
-
-        print()
-
-        print("Skipped recommendations:")
-
-        for item in report["skipped"]:
-
-            print(
-                f"  - {item['figure']}: "
-                f"{item['reason']}"
-            )
 
 
 # ------------------------------------------------------------
@@ -961,58 +1217,37 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         description=(
-            "Convert scientific figure "
-            "recommendations into concrete "
-            "visual template plans."
+            "Build concrete scientific "
+            "figure plans from experimental data."
         )
     )
 
     parser.add_argument(
         "--input",
         required=True,
-        help=(
-            "Input CSV, TSV, TXT, "
-            "or XLSX file."
-        ),
     )
 
     parser.add_argument(
         "--sheet",
         default="0",
-        help=(
-            "Excel sheet name or "
-            "zero-based index."
-        ),
     )
 
     parser.add_argument(
         "--highlight",
         default=None,
-        help=(
-            "Optional model or variant "
-            "to emphasize, e.g. Ours."
-        ),
     )
 
     parser.add_argument(
         "--top",
         type=int,
         default=3,
-        help=(
-            "Maximum number of "
-            "renderable figure plans."
-        ),
     )
 
     parser.add_argument(
         "--output",
         default=(
-            "outputs/planning/"
+            "outputs/figure_plan/"
             "figure_plan.json"
-        ),
-        help=(
-            "Output path for the "
-            "figure plan JSON."
         ),
     )
 
@@ -1021,9 +1256,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
 
-    parser = build_parser()
-
-    args = parser.parse_args()
+    args = (
+        build_parser()
+        .parse_args()
+    )
 
     input_path = Path(
         args.input
@@ -1032,7 +1268,9 @@ def main() -> None:
     data = load_data(
         input_path,
         sheet_name=parse_sheet(
-            str(args.sheet)
+            str(
+                args.sheet
+            )
         ),
     )
 
@@ -1041,8 +1279,10 @@ def main() -> None:
         source=input_path,
     )
 
-    selection = build_selection_report(
-        inspection
+    selection = (
+        build_selection_report(
+            inspection
+        )
     )
 
     plan = build_figure_plan(
@@ -1051,10 +1291,6 @@ def main() -> None:
         selection=selection,
         highlight=args.highlight,
         top=args.top,
-    )
-
-    print_figure_plan(
-        plan
     )
 
     output_path = Path(
@@ -1076,16 +1312,57 @@ def main() -> None:
             file,
             indent=2,
             ensure_ascii=False,
+            default=str,
         )
+
+    print(
+        "sci-figure-maker figure planner"
+    )
+
+    print(
+        "==============================="
+    )
+
+    if not plan[
+        "plans"
+    ]:
+
+        print(
+            "No renderable figure "
+            "plans were created."
+        )
+
+    else:
+
+        for index, item in enumerate(
+            plan[
+                "plans"
+            ],
+            start=1,
+        ):
+
+            print()
+
+            print(
+                f"{index}. "
+                f"{item['title']}"
+            )
+
+            print(
+                f"   Figure: "
+                f"{item['figure']}"
+            )
+
+            print(
+                f"   Template: "
+                f"{item['template']}"
+            )
 
     print()
 
     print(
-        "Figure plan saved to:"
-    )
-
-    print(
-        f"  {output_path}"
+        f"Plan saved to: "
+        f"{output_path}"
     )
 
 

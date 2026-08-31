@@ -29,7 +29,7 @@ FIGURE_CATALOG: dict[str, dict[str, Any]] = {
         "description": (
             "Rank models according to a selected metric."
         ),
-        "implemented": False,
+        "implemented": True,
     },
 
     "accuracy_efficiency": {
@@ -38,7 +38,7 @@ FIGURE_CATALOG: dict[str, dict[str, Any]] = {
             "Compare predictive performance against "
             "speed or computational efficiency."
         ),
-        "implemented": False,
+        "implemented": True,
     },
 
     "pareto": {
@@ -56,7 +56,16 @@ FIGURE_CATALOG: dict[str, dict[str, Any]] = {
             "Visualize training or validation metrics "
             "across epochs or iterations."
         ),
-        "implemented": False,
+        "implemented": True,
+    },
+
+    "confidence_curve": {
+        "title": "Confidence Curves",
+        "description": (
+            "Visualize Precision, Recall, and F1 "
+            "as functions of the confidence threshold."
+        ),
+        "implemented": True,
     },
 
     "ablation": {
@@ -65,7 +74,7 @@ FIGURE_CATALOG: dict[str, dict[str, Any]] = {
             "Show the performance changes associated "
             "with model components or configurations."
         ),
-        "implemented": False,
+        "implemented": True,
     },
 
     "robustness_heatmap": {
@@ -74,7 +83,7 @@ FIGURE_CATALOG: dict[str, dict[str, Any]] = {
             "Compare model performance under multiple "
             "experimental conditions or scenarios."
         ),
-        "implemented": False,
+        "implemented": True,
     },
 
     "pr_curve": {
@@ -83,7 +92,7 @@ FIGURE_CATALOG: dict[str, dict[str, Any]] = {
             "Visualize the Precision–Recall trade-off "
             "using real curve-point data."
         ),
-        "implemented": False,
+        "implemented": True,
     },
 
     "roc_curve": {
@@ -92,7 +101,7 @@ FIGURE_CATALOG: dict[str, dict[str, Any]] = {
             "Visualize true-positive rate against "
             "false-positive rate."
         ),
-        "implemented": False,
+        "implemented": True,
     },
 }
 
@@ -153,6 +162,17 @@ EXPERIMENT_FIGURE_RULES = {
         },
     ],
 
+    "confidence_curve": [
+        {
+            "figure": "confidence_curve",
+            "priority": 100,
+            "reason": (
+                "Confidence threshold and Precision, "
+                "Recall, or F1 series were detected."
+            ),
+        },
+    ],
+
     "ablation": [
         {
             "figure": "ablation",
@@ -206,21 +226,24 @@ EXPERIMENT_FIGURE_RULES = {
 def recommend_figures(
     inspection_report: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """
-    Recommend scientific figure types based on
-    the inferred experiment structure.
-    """
 
-    recommendations: dict[str, dict[str, Any]] = {}
+    recommendations: dict[
+        str,
+        dict[str, Any],
+    ] = {}
 
-    candidate_experiments = inspection_report.get(
-        "candidate_experiments",
-        [],
+    candidate_experiments = (
+        inspection_report.get(
+            "candidate_experiments",
+            [],
+        )
     )
 
     for experiment in candidate_experiments:
 
-        experiment_type = experiment["type"]
+        experiment_type = experiment[
+            "type"
+        ]
 
         rules = EXPERIMENT_FIGURE_RULES.get(
             experiment_type,
@@ -229,31 +252,46 @@ def recommend_figures(
 
         for rule in rules:
 
-            figure_name = rule["figure"]
-
-            catalog_entry = FIGURE_CATALOG[
-                figure_name
+            figure_name = rule[
+                "figure"
             ]
+
+            catalog_entry = (
+                FIGURE_CATALOG[
+                    figure_name
+                ]
+            )
 
             recommendation = {
                 "figure": figure_name,
-                "title": catalog_entry["title"],
-                "priority": rule["priority"],
-                "implemented": catalog_entry[
-                    "implemented"
+                "title": catalog_entry[
+                    "title"
                 ],
-                "experiment_type": experiment_type,
-                "reason": rule["reason"],
-                "description": catalog_entry[
-                    "description"
+                "priority": rule[
+                    "priority"
                 ],
+                "implemented": (
+                    catalog_entry[
+                        "implemented"
+                    ]
+                ),
+                "experiment_type": (
+                    experiment_type
+                ),
+                "reason": rule[
+                    "reason"
+                ],
+                "description": (
+                    catalog_entry[
+                        "description"
+                    ]
+                ),
             }
 
-            # Avoid duplicate recommendations.
-            #
-            # If a figure is recommended from multiple
-            # experiment types, keep the higher-priority one.
-            if figure_name not in recommendations:
+            if (
+                figure_name
+                not in recommendations
+            ):
 
                 recommendations[
                     figure_name
@@ -261,38 +299,39 @@ def recommend_figures(
 
             else:
 
-                existing = recommendations[
-                    figure_name
-                ]
+                existing = (
+                    recommendations[
+                        figure_name
+                    ]
+                )
 
                 if (
-                    recommendation["priority"]
-                    > existing["priority"]
+                    recommendation[
+                        "priority"
+                    ]
+                    > existing[
+                        "priority"
+                    ]
                 ):
 
                     recommendations[
                         figure_name
                     ] = recommendation
 
-    ordered = sorted(
+    return sorted(
         recommendations.values(),
-        key=lambda item: item["priority"],
+        key=lambda item: item[
+            "priority"
+        ],
         reverse=True,
     )
 
-    return ordered
-
 
 def choose_primary_figure(
-    recommendations: list[dict[str, Any]],
+    recommendations: list[
+        dict[str, Any]
+    ],
 ) -> dict[str, Any] | None:
-    """
-    Select the highest-priority recommendation.
-
-    This is a recommendation only.
-    It does not imply that alternative figures
-    are scientifically invalid.
-    """
 
     if not recommendations:
         return None
@@ -300,19 +339,14 @@ def choose_primary_figure(
     return recommendations[0]
 
 
-# ------------------------------------------------------------
-# Full selection report
-# ------------------------------------------------------------
-
 def build_selection_report(
     inspection_report: dict[str, Any],
 ) -> dict[str, Any]:
-    """
-    Build a structured figure-selection report.
-    """
 
-    recommendations = recommend_figures(
-        inspection_report
+    recommendations = (
+        recommend_figures(
+            inspection_report
+        )
     )
 
     primary = choose_primary_figure(
@@ -329,11 +363,17 @@ def build_selection_report(
                 [],
             )
         ),
-        "primary_recommendation": primary,
-        "recommendations": recommendations,
-        "warnings": inspection_report.get(
-            "warnings",
-            [],
+        "primary_recommendation": (
+            primary
+        ),
+        "recommendations": (
+            recommendations
+        ),
+        "warnings": (
+            inspection_report.get(
+                "warnings",
+                [],
+            )
         ),
     }
 
@@ -345,12 +385,14 @@ def build_selection_report(
 def print_selection_report(
     report: dict[str, Any],
 ) -> None:
-    """
-    Print figure recommendations.
-    """
 
-    print("sci-figure-maker plot selector")
-    print("------------------------------")
+    print(
+        "sci-figure-maker plot selector"
+    )
+
+    print(
+        "------------------------------"
+    )
 
     print(
         f"Source: {report['source']}"
@@ -371,7 +413,9 @@ def print_selection_report(
 
         return
 
-    print("Primary recommendation:")
+    print(
+        "Primary recommendation:"
+    )
 
     print(
         f"  {primary['title']}"
@@ -394,7 +438,9 @@ def print_selection_report(
 
     print()
 
-    print("All recommendations:")
+    print(
+        "All recommendations:"
+    )
 
     for index, item in enumerate(
         report["recommendations"],
@@ -424,7 +470,7 @@ def print_selection_report(
 
 
 # ------------------------------------------------------------
-# Command-line interface
+# CLI
 # ------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
@@ -439,18 +485,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--input",
         required=True,
-        help=(
-            "Input CSV, TSV, TXT, or XLSX file."
-        ),
     )
 
     parser.add_argument(
         "--sheet",
         default=0,
-        help=(
-            "Excel sheet name or "
-            "zero-based sheet index."
-        ),
     )
 
     parser.add_argument(
@@ -458,10 +497,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=(
             "outputs/selection/"
             "figure_recommendations.json"
-        ),
-        help=(
-            "Path for the JSON "
-            "recommendation report."
         ),
     )
 
@@ -481,9 +516,7 @@ def parse_sheet_argument(
 
 def main() -> None:
 
-    parser = build_parser()
-
-    args = parser.parse_args()
+    args = build_parser().parse_args()
 
     input_path = Path(
         args.input
@@ -533,6 +566,7 @@ def main() -> None:
         )
 
     print()
+
     print(
         "Recommendation report saved to:"
     )

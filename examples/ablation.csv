@@ -1,0 +1,6 @@
+Variant,mAP50_95
+Baseline,67.4
++C2f,68.6
++Attention,69.8
++Improved_Loss,71.1
+Ours,72.8
