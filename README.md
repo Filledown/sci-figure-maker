@@ -1,40 +1,39 @@
-# sci-figure-maker
+<h1 align="center">sci-figure-maker</h1>
 
-A reproducible scientific figure toolkit for AI and recognition research.
+<p align="center">
+  <b>Automatic scientific figure generation for deep-learning and recognition research.</b>
+</p>
 
-## About
+<p align="center">
+  From experimental CSV / Excel data to publication-style scientific figures.
+</p>
 
-`sci-figure-maker` is designed to help researchers create publication-quality scientific figures from experimental data and model outputs.
+<p align="center">
+  <img src="https://img.shields.io/badge/release-v0.7.0--alpha.1-orange">
+  <img src="https://img.shields.io/badge/status-alpha-yellow">
+  <img src="https://img.shields.io/badge/python-3.10%2B-blue">
+  <img src="https://img.shields.io/badge/output-PNG%20%7C%20SVG%20%7C%20PDF-brightgreen">
+</p>
 
-The project focuses on:
+---
 
-* scientific data visualization
-* deep-learning experiment visualization
-* model evaluation
-* model comparison
-* ablation studies
-* robustness analysis
-* dataset analysis
-* qualitative prediction results
-* paper figure planning
-* multi-panel figure composition
+## Overview
 
-## Design Principles
+**sci-figure-maker** is a scientific visualization toolkit designed to turn experimental data into publication-style figures with minimal manual plotting work.
 
-The project prioritizes:
+The current automatic workflow is:
 
-1. Scientific accuracy
-2. Reproducibility
-3. Clear visual communication
-4. Appropriate visualization choices
-5. Publication-quality aesthetics
-
-Scientific accuracy always takes priority over visual appearance.
-
-## Current Status
-
-The project is currently under development.
-
-Target version:
-
-`v0.1.0`
+```text
+CSV / Excel
+    ↓
+Data Inspection
+    ↓
+Experiment Recognition
+    ↓
+Figure Recommendation
+    ↓
+Figure Planning
+    ↓
+Template Rendering
+    ↓
+PNG + SVG + PDF
