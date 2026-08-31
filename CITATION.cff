@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: "If you use sci-figure-maker in your research, please cite this software."
+title: "sci-figure-maker"
+type: software
+
+authors:
+  - family-names: "Filledown"
+
+version: "0.7.0-alpha.1"
+date-released: "2026-08-31"
+
+repository-code: "https://github.com/Filledown/sci-figure-maker"
+
+license: MIT
+
+abstract: >
+  sci-figure-maker is an automatic scientific figure generation toolkit
+  for deep-learning and recognition research. It supports experimental
+  data inspection, experiment-type recognition, scientific figure
+  recommendation, automatic rendering, and PNG, SVG, and PDF export.
+
+keywords:
+  - scientific visualization
+  - deep learning
+  - machine learning
+  - data visualization
+  - scientific computing
+  - matplotlib
+  - research software
